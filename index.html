@@ -65,6 +65,17 @@ canvas {
   border: 1px solid var(--line); background: var(--ink); border-radius: 3px; padding: 1px 5px;
 }
 .pad { position: absolute; display: none; gap: 10px; }
+.entry { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding-inline: 16px; }
+.entry[hidden] { display: none !important; }
+.entry-box { display: flex; flex-direction: column; gap: 10px; align-items: stretch; width: min(280px, 100%); padding: 20px; background: var(--ink); border: 2px solid var(--amber); border-radius: 6px; box-shadow: 0 12px 40px rgba(0,0,0,.5); }
+.entry-box p { margin: 0; text-align: center; }
+.entry-title { font-size: 20px; color: var(--amber); }
+.entry-score { font-size: 15px; color: var(--paper); font-variant-numeric: tabular-nums; }
+.entry-box label { font-size: 12px; color: var(--dim); }
+.entry-box input { font-family: var(--pixel); font-size: 20px; padding: 8px 10px; border-radius: 4px; border: 2px solid var(--line); background: var(--night); color: var(--paper); -webkit-user-select: text; user-select: text; touch-action: manipulation; }
+.entry-box input:focus-visible { outline: 2px solid var(--amber); outline-offset: 1px; }
+.entry-box button { font-family: var(--pixel); font-size: 16px; padding: 10px; border-radius: 4px; border: 0; background: var(--amber); color: var(--night); cursor: pointer; }
+.entry-box button:focus-visible { outline: 2px solid var(--paper); outline-offset: 2px; }
 .pad button {
   font-family: var(--pixel); font-size: 14px; color: var(--paper);
   background: rgba(22,27,71,.75); border: 2px solid var(--line); border-radius: 50%;
@@ -95,6 +106,15 @@ canvas {
 <div class="wrap">
   <div class="stage" id="stage">
     <canvas id="cv" width="360" height="640" aria-label="シューティングゲーム画面"></canvas>
+    <div class="entry" id="entry" hidden>
+      <form class="entry-box" id="entryForm" autocomplete="off">
+        <p class="entry-title">ランキング入り！</p>
+        <p class="entry-score" id="entryScore"></p>
+        <label for="entryName">なまえ（8文字まで）</label>
+        <input id="entryName" maxlength="8" placeholder="ななし" enterkeyhint="done">
+        <button type="submit" id="entryOk">とうろく</button>
+      </form>
+    </div>
     <div class="pad" id="pad">
       <button class="sp" id="spBtn" aria-label="必殺技 にくきゅうスタンプ">肉</button>
       <button class="bomb" id="bombBtn" aria-label="ボム">ボム</button>
@@ -163,8 +183,41 @@ const CATS = {
 let selCat = 'tina';
 try { const s = localStorage.getItem('hoshikuzu-cat'); if (CATS[s]) selCat = s; } catch (e) {}
 const partnerOf = id => id === 'tina' ? 'raina' : 'tina';
-const CARD_Y = 262, CARD_H = 168;
+const CARD_Y = 262, CARD_H = 168, DIFF_Y = 240;
+const RANK_BTN = { x: 200, y: CARD_Y + CARD_H + 63, w: 124, h: 26 };
 const CARDS = { tina: { x: 22, y: CARD_Y, w: 150, h: CARD_H }, raina: { x: W - 172, y: CARD_Y, w: 150, h: CARD_H } };
+// ---------- Difficulty ----------
+const DIFFS = {
+  easy:   { label: 'かんたん', lives: 5, bombs: 3, bullet: 0.75, bossHp: 0.7, spawn: 1.3, streak: 20, bonus: 0,      col: '#6ee7c8' },
+  normal: { label: 'ふつう',   lives: 3, bombs: 2, bullet: 1.0,  bossHp: 1.0, spawn: 1.0, streak: 30, bonus: 50000,  col: '#ffb547' },
+  hard:   { label: 'ムズイ',   lives: 2, bombs: 1, bullet: 1.25, bossHp: 1.3, spawn: 0.8, streak: 40, bonus: 150000, col: '#ff5d8f' },
+};
+const DIFF_KEYS = ['easy', 'normal', 'hard'];
+let diffKey = 'normal';
+try { const d = localStorage.getItem('tina-raina-diff'); if (DIFFS[d]) diffKey = d; } catch (e) {}
+const D = () => DIFFS[diffKey];
+function setDiff(k) {
+  if (!DIFFS[k] || k === diffKey) return;
+  diffKey = k; hiScore = topScore(k);
+  try { localStorage.setItem('tina-raina-diff', k); } catch (e) {}
+  tone(k === 'easy' ? 660 : k === 'normal' ? 880 : 1100, 0.08, 'triangle', 0.05);
+}
+const FINAL_STAGE = 12;
+
+// ---------- Ranking (kept on this device) ----------
+let ranks = { easy: [], normal: [], hard: [] };
+try { const r = JSON.parse(localStorage.getItem('tina-raina-rank') || 'null'); if (r) for (const k of DIFF_KEYS) if (Array.isArray(r[k])) ranks[k] = r[k]; } catch (e) {}
+if (!ranks.normal.length && hiScore > 0) ranks.normal.push({ name: 'むかしの記録', score: hiScore, stage: 0, cat: 'tina', clear: false });
+function saveRanks() { try { localStorage.setItem('tina-raina-rank', JSON.stringify(ranks)); } catch (e) {} }
+const topScore = k => (ranks[k][0] && ranks[k][0].score) || 0;
+const qualifies = (k, sc) => sc > 0 && (ranks[k].length < 10 || sc > ranks[k][ranks[k].length - 1].score);
+function addRank(k, entry) {
+  ranks[k].push(entry); ranks[k].sort((a, b) => b.score - a.score); ranks[k] = ranks[k].slice(0, 10); saveRanks();
+  return ranks[k].indexOf(entry);
+}
+hiScore = topScore(diffKey);
+let rankView = { k: 'normal', hl: -1 }, runCleared = false;
+
 function selectCat(id) {
   if (selCat === id) return;
   selCat = id;
@@ -305,6 +358,9 @@ const SONGS = {
   beach: { bpm: 126, wave: 'square', drums: 'k.hsk.hsk.hsk.hs',
     mel: 'F#5 . F#5 . A5 - F#5 . D5 . E5 . F#5 - - - | D5 . D5 . F#5 - D5 . B4 . C#5 . D5 - - - | B4 . D5 . G5 - F#5 . E5 . D5 . E5 - - - | C#5 - E5 - A5 - G5 - F#5 - E5 - . . . .',
     chords: [['D2', 'F#2', 'A2'], ['B1', 'D2', 'F#2'], ['G1', 'B1', 'D2'], ['A1', 'C#2', 'E2']] },
+  ending: { bpm: 92, wave: 'triangle', drums: 'k.......k...h...',
+    mel: 'E5 - - - D5 - C5 - G4 - - - C5 - E5 - | D5 - - - B4 - G4 - D5 - - - B4 - - - | C5 - - - E5 - A5 - G5 - - - E5 - C5 - | F5 - - - E5 - D5 - C5 - - - - - - -',
+    chords: [['C3', 'E3', 'G3'], ['G2', 'B2', 'D3'], ['A2', 'C3', 'E3'], ['F2', 'A2', 'C3']] },
   boss: { bpm: 156, wave: 'sawtooth', drums: 'k.hks.h.k.hks.ss',
     mel: 'A4 A4 . A4 C5 . A4 . E5 - D5 - C5 - B4 - | C5 C5 . C5 F5 . C5 . A5 - G5 - F5 - E5 - | D5 D5 . D5 G5 . D5 . B5 - A5 - G5 - F5 - | E5 - G#5 - B5 - E6 - D6 - B5 - G#5 - E5 -',
     chords: [['A2', 'C3', 'E3'], ['F2', 'A2', 'C3'], ['G2', 'B2', 'D3'], ['E2', 'G#2', 'B2']] },
@@ -366,7 +422,8 @@ function jingle() {
 }
 function updateMusic() {
   let want = null;
-  if (state === 'title' || state === 'splash') want = 'meadow';
+  if (state === 'title' || state === 'splash' || state === 'ranking' || state === 'entry') want = 'meadow';
+  else if (state === 'ending') want = endT > 200 ? 'ending' : null;
   else if (state === 'play' || state === 'pause') {
     if (banner && banner.clear) want = null;
     else if (boss && !boss.dead) want = 'boss';
@@ -380,12 +437,19 @@ function updateMusic() {
 // ---------- Input ----------
 const keys = new Set();
 addEventListener('keydown', e => {
+  if (e.target && e.target.tagName === 'INPUT') return;   // typing a name
   const k = e.key.toLowerCase();
+  if (state === 'entry') return;
   if (['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k)) e.preventDefault();
   if (keys.has(k)) return;
   keys.add(k);
   initAudio();
   if (state === 'splash') { leaveSplash(); return; }
+  if (state === 'title' && (k === 'arrowup' || k === 'w')) setDiff(DIFF_KEYS[Math.max(0, DIFF_KEYS.indexOf(diffKey) - 1)]);
+  if (state === 'title' && (k === 'arrowdown' || k === 's')) setDiff(DIFF_KEYS[Math.min(2, DIFF_KEYS.indexOf(diffKey) + 1)]);
+  if (state === 'title' && k === 'r') { rankView = { k: diffKey, hl: -1 }; state = 'ranking'; return; }
+  if (state === 'ranking' && (k === 'arrowleft' || k === 'a' || k === 'arrowright' || k === 'd')) { const i = DIFF_KEYS.indexOf(rankView.k) + (k === 'arrowleft' || k === 'a' ? -1 : 1); rankView = { k: DIFF_KEYS[(i + 3) % 3], hl: -1 }; return; }
+  if (state === 'ranking' && k === 'escape') { state = 'title'; return; }
   if (state === 'title' && (k === 'arrowleft' || k === 'a')) selectCat('tina');
   if (state === 'title' && (k === 'arrowright' || k === 'd')) selectCat('raina');
   if (k === 'enter' || k === ' ' || k === 'z') onStartPress();
@@ -426,9 +490,17 @@ cv.addEventListener('pointerdown', e => {
         return;
       }
     }
+    for (let i = 0; i < 3; i++) { const cx = W / 2 + (i - 1) * 92; if (Math.abs(p.x - cx) < 42 && Math.abs(p.y - DIFF_Y) < 14) { setDiff(DIFF_KEYS[i]); return; } }
+    if (p.x > RANK_BTN.x && p.x < RANK_BTN.x + RANK_BTN.w && p.y > RANK_BTN.y && p.y < RANK_BTN.y + RANK_BTN.h) { rankView = { k: diffKey, hl: -1 }; state = 'ranking'; return; }
     if (p.y > CARD_Y + CARD_H) onStartPress();
     return;
   }
+  if (state === 'ranking') {
+    const p = toGame(e);
+    for (let i = 0; i < 3; i++) { const cx = W / 2 + (i - 1) * 96; if (Math.abs(p.x - cx) < 44 && Math.abs(p.y - 116) < 16) { rankView = { k: DIFF_KEYS[i], hl: -1 }; return; } }
+    state = 'title'; return;
+  }
+  if (state === 'entry') return;
   if (state !== 'play') { onStartPress(); return; }
   drag = { id: e.pointerId, ...toGame(e) };
   try { cv.setPointerCapture(e.pointerId); } catch (_) {}
@@ -537,8 +609,8 @@ function drawSpecial() {
 }
 
 function resetGame() {
-  score = 0; stage = 1;
-  player = { x: W / 2, y: H - 90, lives: 3, bombs: 2, level: 1, cool: 0, inv: 120, alive: true, respawn: 0, cat: selCat, streak: 0, matatabi: 0, sp: 0 };
+  score = 0; stage = 1; runCleared = false; hiScore = topScore(diffKey);
+  player = { x: W / 2, y: H - 90, lives: D().lives, bombs: D().bombs, level: 1, cool: 0, inv: 120, alive: true, respawn: 0, cat: selCat, streak: 0, matatabi: 0, sp: 0 };
   partner = { x: W / 2 - 26, y: H - 70, cat: partnerOf(selCat), cool: 0, punch: 0, punchCD: 0, side: 1 };
   player.punch = 0; player.punchCD = 0; player.side = 1;
   startStage();
@@ -548,12 +620,14 @@ function startStage() {
   bgPrev = stage > 1 ? biomeOf(stage - 1) : null; bgFade = stage > 1 ? 90 : 0;
   stageT = 0; spawnT = 60; boss = null; bossWarned = false;
   pShots = []; eShots = []; enemies = []; items = []; parts = []; popups = [];
-  banner = { text: `STAGE ${stage}`, sub: stageNames[(stage - 1) % stageNames.length], t: 150 };
+  banner = { text: stage === FINAL_STAGE ? 'FINAL STAGE' : `STAGE ${stage}`, sub: stageNames[(stage - 1) % stageNames.length], t: 150 };
 }
 
 function onStartPress() {
   if (state === 'title') { resetGame(); state = 'play'; catVoice(selCat, 'meow'); catVoice(partnerOf(selCat), 'meow', 0.35); }
-  else if (state === 'over' && overT > 40) { state = 'title'; newHi = false; }
+  else if (state === 'over' && overT > 40) { newHi = false; finishRun(); }
+  else if (state === 'ending') endingTap();
+  else if (state === 'ranking') state = 'title';
   else if (state === 'pause') state = 'play';
 }
 function togglePause() {
@@ -599,7 +673,7 @@ function mkEnemy(type, x, y, o = {}) {
   return { type, x, y, x0: x, vx: 0, vy: base.vy, hp: Math.ceil(base.hp * (type === 'turret' ? diff() : 1)), r: base.r, score: base.score, t: 0, hitT: 0, ...o };
 }
 function spawnBoss() {
-  const hp = Math.round(320 + stage * 160);
+  const hp = Math.round((320 + stage * 160) * D().bossHp);
   boss = { x: W / 2, y: -80, hp, max: hp, r: 34, t: 0, hitT: 0, enter: true, kind: BOSS_BY_BIOME[biomeOf(stage)] };
   banner = null;
 }
@@ -609,7 +683,7 @@ function aimAt(x, y, speed) {
   const a = Math.atan2(player.y - y, player.x - x);
   return { vx: Math.cos(a) * speed, vy: Math.sin(a) * speed, a };
 }
-function eFire(x, y, vx, vy, r = 4, col = C.rose) { eShots.push({ x, y, vx, vy, r, col }); }
+function eFire(x, y, vx, vy, r = 4, col = C.rose) { const m = D().bullet; eShots.push({ x, y, vx: vx * m, vy: vy * m, r, col }); }
 function fan(x, y, n, spread, speed, col) {
   const { a } = aimAt(x, y, 1);
   for (let i = 0; i < n; i++) {
@@ -692,7 +766,7 @@ function damageEnemy(e, dmg) {
     if (!special) addSp(e.type === 'turret' ? 8 : 2.5);
     score += e.score; popup(e.x, e.y, e.score);
     killVoice(e.type === 'turret');
-    if (player.alive && ++player.streak >= MATATABI_STREAK) { player.streak = 0; dropMatatabi(e.x, e.y, 'ノーミス30匹！'); }
+    if (player.alive && ++player.streak >= D().streak) { player.streak = 0; dropMatatabi(e.x, e.y, `ノーミス${D().streak}匹！`); }
     burst(e.x, e.y, e.type === 'turret' ? 26 : 12, e.type === 'turret' ? C.amber : C.mint, e.type === 'turret' ? 4 : 3);
     sfx.boom();
     if (e.type === 'turret') { shake = Math.max(shake, 6); items.push(mkItem(Math.random() < 0.75 ? 'P' : 'B', e.x, e.y)); }
@@ -726,7 +800,7 @@ function damageBoss(dmg) {
   }
 }
 // マタタビ: earned by good play (30 kills in a row without a miss, or a no-miss boss win)
-const MATATABI_STREAK = 30, MAX_LIVES = 5;
+const MAX_LIVES = 5;
 function dropMatatabi(x, y, why) {
   items.push(mkItem('M', x, y));
   popup(x, y - 18, why, C.mint, 13, 70);
@@ -746,19 +820,39 @@ function hitPlayer() {
   player.lives--;
   if (player.lives < 0) {
     player.respawn = 0;
-    setTimeout(() => { state = 'over'; overT = 0; if (score > hiScore) { hiScore = score; saveHi(); newHi = true; } catVoice(player.cat, 'sad'); catVoice(partner.cat, 'sad', 0.5); }, 900);
+    setTimeout(() => { state = 'over'; overT = 0; newHi = score > topScore(diffKey); catVoice(player.cat, 'sad'); catVoice(partner.cat, 'sad', 0.5); }, 900);
   }
 }
 let overT = 0, newHi = false;
+const entryEl = document.getElementById('entry'), entryForm = document.getElementById('entryForm'), entryName = document.getElementById('entryName');
+function finishRun() {
+  if (qualifies(diffKey, score)) {
+    state = 'entry';
+    document.getElementById('entryScore').textContent = `${D().label}  ${score.toLocaleString()} 点`;
+    try { entryName.value = localStorage.getItem('tina-raina-name') || ''; } catch (e) { entryName.value = ''; }
+    entryEl.hidden = false;
+    setTimeout(() => { try { entryName.focus(); } catch (e) {} }, 30);
+  } else { rankView = { k: diffKey, hl: -1 }; state = 'ranking'; }
+}
+entryForm.addEventListener('submit', e => {
+  e.preventDefault();
+  const name = (entryName.value || '').trim().slice(0, 8) || 'ななし';
+  try { localStorage.setItem('tina-raina-name', name); } catch (err) {}
+  const hl = addRank(diffKey, { name, score, stage: runCleared ? FINAL_STAGE : stage, cat: player.cat, clear: runCleared });
+  entryEl.hidden = true; entryName.blur();
+  hiScore = topScore(diffKey);
+  rankView = { k: diffKey, hl }; state = 'ranking';
+  catVoice(player.cat, 'happy'); catVoice(partner.cat, 'happy', 0.2);
+});
 
 // ---------- Update ----------
 function update() {
   frame++;
   bgY = (bgY + 1.1) % BG_H; if (bgFade > 0) bgFade--;
-  if (state !== 'play') { if (state === 'over') overT++; updateFx(); return; }
+  if (state !== 'play') { if (state === 'over') overT++; if (state === 'ending') updateEnding(); updateFx(); return; }
   if (special) { updateSpecial(); for (const e of enemies) if (e.hitT) e.hitT--; if (boss && boss.hitT) boss.hitT--; if (boss && boss.dead && boss.deathT > 0) boss.deathT--; if (player.inv > 0) player.inv--; updateFx(); return; }
   stageT++;
-  if (banner) { banner.t--; if (banner.t <= 0) { const wasClear = banner.clear; banner = null; if (wasClear) { stage++; startStage(); } } }
+  if (banner) { banner.t--; if (banner.t <= 0) { const wasClear = banner.clear; banner = null; if (wasClear) { if (stage >= FINAL_STAGE) startEnding(); else { stage++; startStage(); } } } }
 
   // player
   if (player.alive) {
@@ -790,14 +884,14 @@ function update() {
   } else if (player.respawn > 0) {
     if (--player.respawn === 0) {
       player.alive = true; player.x = W / 2; player.y = H - 90; player.inv = 150;
-      player.level = Math.max(1, player.level - 1); player.bombs = Math.max(player.bombs, 2);
+      player.level = Math.max(1, player.level - 1); player.bombs = Math.max(player.bombs, D().bombs);
     }
   }
 
   // spawns
   if (!boss && !(banner && banner.clear)) {
     if (stageT < STAGE_LEN) {
-      if (--spawnT <= 0) { spawnWave(); spawnT = Math.max(48, 115 - stage * 9) + rand(0, 30); }
+      if (--spawnT <= 0) { spawnWave(); spawnT = (Math.max(48, 115 - Math.min(stage, 8) * 9) + rand(0, 30)) * D().spawn; }
     } else if (!bossWarned && enemies.length === 0) {
       bossWarned = true; banner = { text: 'WARNING', sub: `ボス ${BOSS_DEFS[BOSS_BY_BIOME[biomeOf(stage)]].name} 接近中！`, t: 140, warn: true }; sfx.warn();
       setTimeout(() => { if (state === 'play' || state === 'pause') spawnBoss(); }, 2300);
@@ -1641,6 +1735,9 @@ function draw() {
 
   if (state === 'title') { ctx.fillStyle = 'rgba(11,14,42,0.5)'; ctx.fillRect(0, 0, W, H); drawTitle(); ctx.restore(); return; }
   if (state === 'splash') { ctx.fillStyle = 'rgba(11,14,42,0.45)'; ctx.fillRect(0, 0, W, H); drawSplash(); ctx.restore(); return; }
+  if (state === 'ending') { drawEnding(); ctx.restore(); return; }
+  if (state === 'ranking') { drawRanking(); ctx.restore(); return; }
+  if (state === 'entry') { ctx.fillStyle = 'rgba(11,14,42,0.8)'; ctx.fillRect(0, 0, W, H); drawCat(W / 2 - 28, 120, frame, player.cat, 1.8, isBlink(frame)); drawCat(W / 2 + 28, 124, frame + 40, partner.cat, 1.5, isBlink(frame + 90)); ctx.restore(); return; }
 
   // items
   for (const it of items) drawItem(it.kind, it.x, it.y + Math.sin(it.t * 0.15) * 1.5, it.t, 1);
@@ -1734,13 +1831,14 @@ function drawHUD() {
     ctx.fillStyle = full ? (Math.floor(frame / 8) % 2 ? C.amber : '#fff1c9') : '#e9a23a'; ctx.fillRect(gx + 1, gy + 1, (gw - 2) * f, 6);
     if (full && !special) text(IS_TOUCH ? '「肉」ボタンで必殺！' : 'C キーで必殺！', gx + gw + 6, gy + 4, 10, C.amber, 'left'); }
   // マタタビ gauge: fills with each kill, empties on a miss
-  { const gx = W / 2 - 46, gy = H - 16, gw = 70, f = Math.min(1, (player.streak || 0) / MATATABI_STREAK);
+  { const gx = W / 2 - 46, gy = H - 16, gw = 70, f = Math.min(1, (player.streak || 0) / D().streak);
     drawItem('M', gx - 10, gy + 4, 0, 0.55);
     ctx.fillStyle = 'rgba(11,14,42,0.75)'; ctx.fillRect(gx, gy, gw, 7);
     ctx.fillStyle = C.mint; ctx.fillRect(gx + 1, gy + 1, (gw - 2) * f, 5);
-    text(`${player.streak || 0}/${MATATABI_STREAK}`, gx + gw + 6, gy + 4, 9, C.dim, 'left'); }
+    text(`${player.streak || 0}/${D().streak}`, gx + gw + 6, gy + 4, 9, C.dim, 'left'); }
   text(`パワー ${'■'.repeat(player.level)}${'□'.repeat(3 - player.level)}`, 10, H - 12, 10, C.dim, 'left');
-  text(`STAGE ${stage}`, W - 10, H - 12, 10, C.dim, 'right');
+  text(`STAGE ${stage}/${FINAL_STAGE}`, W - 10, H - 12, 10, C.dim, 'right');
+  text(D().label, W - 10, H - 30, 10, D().col, 'right');
   // boss HP
   if (boss && !boss.dead && !boss.enter) {
     ctx.fillStyle = C.ink; ctx.fillRect(40, 38, W - 80, 6);
@@ -1830,6 +1928,144 @@ function drawSplash() {
   text('（キーボードなら どれかのキー）', W / 2, 496, 11, C.dim);
   text('♪ 音が出ます', W / 2, 540, 11, C.dim);
 }
+// ---------- Ending: MISSION COMPLETED ----------
+let endT = 0, endInfo = null;
+const END_HOME = 210, END_STATS = 470, END_ROLL = 700, END_DONE = 1500;
+const CREDITS = [
+  ['STAFF', 'h'], ['', ''], ['しゅやく', 's'], ['ティナ（ロシアンブルー）', ''], ['ライナ（キジトラ）', ''], ['', ''],
+  ['ボス', 's'], ['ツキノワグマ', ''], ['大ナマズ', ''], ['マンドリル', ''], ['ホオジロザメ', ''], ['', ''],
+  ['ザコたち', 's'], ['七星テントウ　オニヤンマ', ''], ['鳩　タヌキ', ''], ['', ''],
+  ['アイテム', 's'], ['ビッツ　サラミ　マタタビ', ''], ['', ''],
+  ['ゲームデザイン', 's'], ['NAKAATSU46', ''], ['', ''], ['プログラム', 's'], ['Claude', ''], ['', ''],
+  ['Special Thanks', 's'], ['ほんもののティナちゃん', ''], ['ほんもののライナちゃん', ''], ['', ''], ['', ''],
+  ['Thank you for playing!', 'h'],
+];
+function startEnding() {
+  state = 'ending'; endT = 0; runCleared = true; special = null;
+  const lifeB = Math.max(0, player.lives) * 10000, bombB = player.bombs * 3000, diffB = D().bonus;
+  endInfo = { base: score, lifeB, bombB, diffB, total: score + lifeB + bombB + diffB };
+  score = endInfo.total;
+  eShots.length = 0; enemies.length = 0; items.length = 0;
+  jingle(); catVoice(player.cat, 'meow', 0.6); catVoice(partner.cat, 'meow', 0.9);
+}
+function updateEnding() {
+  endT++;
+  if (endT < END_HOME && endT % 18 === 0) {
+    const x = rand(40, W - 40), y = rand(60, 260), cols = [C.amber, C.rose, C.mint, '#9b7bff', '#fff1c9'];
+    burst(x, y, 34, cols[Math.floor(rand(0, cols.length))], 4.5); noise(0.25, 0.05);
+  }
+  if (endT === END_STATS) { jingle(); }
+  if (endT > END_DONE) endT = END_DONE;
+}
+function endingTap() {
+  if (endT < END_HOME) endT = END_HOME;
+  else if (endT < END_STATS) endT = END_STATS;
+  else if (endT < END_ROLL) endT = END_ROLL;
+  else finishRun();
+}
+function drawHome(t) {
+  // night sky
+  const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#0b0e2a'); g.addColorStop(0.65, '#1b2156'); g.addColorStop(1, '#2a2f6a');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  for (let i = 0; i < 60; i++) { const x = (i * 97) % W, y = (i * 53) % 330, tw = 0.5 + 0.5 * Math.sin(t * 0.05 + i); ctx.globalAlpha = tw; ctx.fillStyle = '#fff6e0'; ctx.fillRect(x, y, i % 5 ? 1 : 2, i % 5 ? 1 : 2); }
+  ctx.globalAlpha = 1;
+  E(290, 80, 26, 26, '#fff1c9'); E(300, 74, 22, 22, '#1b2156');           // crescent moon
+  // hill and house
+  E(W / 2, H + 120, W, 260, '#203a2a');
+  ctx.fillStyle = '#5a3d2a'; ctx.fillRect(70, 300, 220, 170);
+  ctx.fillStyle = '#7a2f2f'; ctx.beginPath(); ctx.moveTo(52, 304); ctx.lineTo(W / 2, 220); ctx.lineTo(308, 304); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#3a271b'; ctx.fillRect(250, 236, 18, 40);
+  // big warm window with the cats inside
+  ctx.fillStyle = '#ffd98a'; ctx.fillRect(95, 330, 170, 115);
+  ctx.fillStyle = 'rgba(255,170,80,0.25)'; ctx.beginPath(); ctx.ellipse(W / 2, 470, 140, 30, 0, 0, TAU); ctx.fill();
+  E(W / 2, 428, 70, 16, '#c0394a'); E(W / 2, 424, 62, 11, '#d9576a');         // cushion
+  drawCat(W / 2 - 24, 404, t * 0.3, 'tina', 1.5, true);
+  drawCat(W / 2 + 24, 406, t * 0.3 + 40, 'raina', 1.4, true);
+  ctx.strokeStyle = '#5a3d2a'; ctx.lineWidth = 4; ctx.strokeRect(95, 330, 170, 115);
+  ctx.beginPath(); ctx.moveTo(W / 2, 330); ctx.lineTo(W / 2, 352); ctx.stroke();
+  // Zzz
+  for (let i = 0; i < 3; i++) { const k = ((t * 0.6 + i * 30) % 90) / 90; ctx.globalAlpha = 1 - k; text('z', W / 2 + 34 + k * 26, 380 - k * 60, 12 + i * 3 + k * 6, '#3a2a5a'); }
+  ctx.globalAlpha = 1;
+}
+function drawEnding() {
+  const t = endT;
+  if (t < END_HOME) {
+    // the cats fly up into the night sky as fireworks go off
+    const k = Math.min(1, t / 150);
+    drawCat(W / 2 - 30, H - 80 - k * 330, frame, player.cat, 1.6, false);
+    drawCat(W / 2 + 30, H - 70 - k * 330, frame + 40, partner.cat, 1.4, false);
+    for (const p of parts) { ctx.globalAlpha = Math.max(0, p.life / p.max); ctx.fillStyle = p.col; ctx.fillRect(p.x, p.y, p.s, p.s); }
+    ctx.globalAlpha = 1;
+    if (t > 30) {
+      const pop = Math.min(1, (t - 30) / 20), sc = 1 + (1 - pop) * 0.6;
+      ctx.save(); ctx.translate(W / 2, H * 0.42); ctx.scale(sc, sc); ctx.globalAlpha = pop;
+      text('MISSION', 0, -26, 40, C.paper); text('COMPLETED', 0, 22, 40, C.amber);
+      ctx.restore();
+    }
+    return;
+  }
+  drawHome(t);
+  const fadeIn = Math.min(1, (t - END_HOME) / 40);
+  ctx.fillStyle = `rgba(11,14,42,${1 - fadeIn})`; ctx.fillRect(0, 0, W, H);
+  text('MISSION COMPLETED', W / 2, 40, 22, C.amber);
+  if (t < END_STATS) {
+    text('ふたりは おうちに かえって', W / 2, 520, 14, C.paper);
+    text('ぐっすり ねむりました', W / 2, 545, 14, C.paper);
+    return;
+  }
+  if (t < END_ROLL) {
+    ctx.fillStyle = 'rgba(11,14,42,0.82)'; ctx.fillRect(30, 90, W - 60, 300);
+    ctx.strokeStyle = C.amber; ctx.lineWidth = 1.5; ctx.strokeRect(30.5, 90.5, W - 61, 299);
+    text(`むずかしさ：${D().label}`, W / 2, 116, 13, D().col);
+    const rows = [['ステージの得点', endInfo.base], [`のこりいのち ${Math.max(0, player.lives)} × 10,000`, endInfo.lifeB], [`のこりサラミ ${player.bombs} × 3,000`, endInfo.bombB], ['むずかしさボーナス', endInfo.diffB]];
+    rows.forEach(([label, v], i) => {
+      if (t - END_STATS < 20 + i * 25) return;
+      text(label, 48, 156 + i * 36, 12, C.paper, 'left');
+      text(v.toLocaleString(), W - 48, 156 + i * 36, 14, C.paper, 'right');
+    });
+    if (t - END_STATS > 130) {
+      ctx.fillStyle = C.line; ctx.fillRect(48, 300, W - 96, 1);
+      text('トータル', 48, 330, 14, C.amber, 'left');
+      text(endInfo.total.toLocaleString(), W - 48, 330, 22, C.amber, 'right');
+      if (Math.floor(frame / 30) % 2) text('タップでつづける', W / 2, 368, 11, C.dim);
+    }
+    return;
+  }
+  // staff roll
+  ctx.fillStyle = 'rgba(11,14,42,0.55)'; ctx.fillRect(0, 70, W, H - 70);
+  const y0 = H + 10 - (t - END_ROLL) * 0.9;
+  CREDITS.forEach(([line, kind], i) => {
+    const y = y0 + i * 30; if (y < 70 || y > H + 20) return;
+    text(line, W / 2, y, kind === 'h' ? 22 : kind === 's' ? 11 : 15, kind === 'h' ? C.amber : kind === 's' ? C.dim : C.paper);
+  });
+  if (y0 + CREDITS.length * 30 < H / 2 && Math.floor(frame / 30) % 2) text('タップしてランキングへ', W / 2, H - 40, 13, C.paper);
+}
+function drawRanking() {
+  ctx.fillStyle = 'rgba(11,14,42,0.85)'; ctx.fillRect(0, 0, W, H);
+  const k = rankView.k, list = ranks[k];
+  text('ランキング', W / 2, 70, 26, C.amber);
+  text('このスマホ・パソコンの記録', W / 2, 92, 10, C.dim);
+  DIFF_KEYS.forEach((key, i) => {
+    const d = DIFFS[key], cx = W / 2 + (i - 1) * 96, sel = key === k;
+    ctx.fillStyle = sel ? d.col : 'rgba(22,27,71,0.9)'; ctx.fillRect(cx - 44, 104, 88, 26);
+    ctx.strokeStyle = sel ? '#fff6e0' : C.line; ctx.lineWidth = sel ? 2 : 1; ctx.strokeRect(cx - 43.5, 104.5, 87, 25);
+    text(d.label, cx, 118, 13, sel ? C.night : C.paper);
+  });
+  if (!list.length) text('まだ記録がないよ', W / 2, 260, 14, C.dim);
+  list.forEach((e, i) => {
+    const y = 160 + i * 38, hl = i === rankView.hl;
+    if (hl) { ctx.fillStyle = `rgba(255,181,71,${0.18 + 0.1 * Math.sin(frame * 0.15)})`; ctx.fillRect(16, y - 16, W - 32, 32); }
+    const medal = ['#ffd24a', '#cfd6e0', '#d9925a'][i];
+    if (medal) { E(36, y, 11, 11, medal); text(String(i + 1), 36, y + 1, 12, C.night); }
+    else text(String(i + 1), 36, y + 1, 13, C.dim);
+    if (CATS[e.cat]) drawCat(64, y + 4, 0, e.cat, 0.55);
+    text(e.name, 82, y + 1, 14, hl ? C.amber : C.paper, 'left');
+    text(e.clear ? '★クリア' : e.stage ? `ST${e.stage}` : '', 232, y + 1, 10, e.clear ? C.amber : C.dim, 'right');
+    text(e.score.toLocaleString(), W - 22, y + 1, 14, hl ? C.amber : C.paper, 'right');
+  });
+  text('◀ ▶ でむずかしさ切りかえ', W / 2, H - 46, 10, C.dim);
+  if (Math.floor(frame / 30) % 2) text('タップ / Enter でタイトルへ', W / 2, H - 24, 12, C.paper);
+}
 function drawTitle() {
   text("TINA & RAINA'S GREAT ADVENTURE", W / 2, 62, 10, C.paper);
   text('ティナとライナの', W / 2, 100, 24, C.paper);
@@ -1837,7 +2073,12 @@ function drawTitle() {
   text('大冒険', W / 2, 157, 62, C.amber);
   drawCat(52, 205 + Math.sin(frame / 18) * 3, frame, 'tina', 1.3, isBlink(frame));
   drawCat(W - 52, 205 + Math.sin(frame / 18 + 1.5) * 3, frame + 40, 'raina', 1.3, isBlink(frame + 100));
-  text('キャラクターをえらぶ', W / 2, 242, 11, C.dim);
+  for (let i = 0; i < 3; i++) {
+    const k = DIFF_KEYS[i], d = DIFFS[k], cx = W / 2 + (i - 1) * 92, sel = k === diffKey;
+    ctx.fillStyle = sel ? d.col : 'rgba(22,27,71,0.85)'; ctx.fillRect(cx - 42, DIFF_Y - 12, 84, 24);
+    ctx.strokeStyle = sel ? '#fff6e0' : C.line; ctx.lineWidth = sel ? 2 : 1; ctx.strokeRect(cx - 41.5, DIFF_Y - 11.5, 83, 23);
+    text(d.label, cx, DIFF_Y + 1, 13, sel ? C.night : C.paper);
+  }
 
   for (const [id, card] of Object.entries(CARDS)) {
     const k = CATS[id], sel = selCat === id;
@@ -1852,11 +2093,13 @@ function drawTitle() {
     text(k.breed, cx, card.y + 127, 10, C.dim);
     text(k.style, cx, card.y + 145, 11, k.shot);
     text(k.note, cx, card.y + 159, 9, C.dim);
-    if (sel) text('▼', cx, card.y - 9, 10, C.amber);
   }
   text(`${CATS[partnerOf(selCat)].name}ちゃんは相棒として一緒に飛ぶよ`, W / 2, CARD_Y + CARD_H + 18, 10, C.dim);
   if (Math.floor(frame / 30) % 2 === 0) text('タップ / Enter でスタート', W / 2, CARD_Y + CARD_H + 48, 15, C.paper);
-  text(`HI SCORE  ${hiScore.toLocaleString()}`, W / 2, CARD_Y + CARD_H + 76, 12, C.amber);
+  text(`HI SCORE  ${hiScore.toLocaleString()}`, W / 2 - 62, CARD_Y + CARD_H + 76, 12, C.amber);
+  ctx.fillStyle = 'rgba(22,27,71,0.85)'; ctx.fillRect(RANK_BTN.x, RANK_BTN.y, RANK_BTN.w, RANK_BTN.h);
+  ctx.strokeStyle = C.amber; ctx.lineWidth = 1.5; ctx.strokeRect(RANK_BTN.x + 0.5, RANK_BTN.y + 0.5, RANK_BTN.w - 1, RANK_BTN.h - 1);
+  text('ランキング ▶', RANK_BTN.x + RANK_BTN.w / 2, RANK_BTN.y + RANK_BTN.h / 2 + 1, 12, C.paper);
   // legend
   const ly = H - 104;
   ctx.fillStyle = C.line; ctx.fillRect(40, ly - 14, W - 80, 1);
@@ -1884,7 +2127,7 @@ function loop(now) {
   if (spBtn.classList.contains('ready') !== spReady) spBtn.classList.toggle('ready', spReady);
   requestAnimationFrame(loop);
 }
-player = { x: W / 2, y: H - 90, lives: 3, bombs: 2, level: 1, alive: true, inv: 0, cat: selCat };
+player = { x: W / 2, y: H - 90, lives: D().lives, bombs: D().bombs, level: 1, alive: true, inv: 0, cat: selCat };
 partner = null;
 pShots = []; eShots = []; enemies = []; items = []; parts = []; popups = [];
 fit();
