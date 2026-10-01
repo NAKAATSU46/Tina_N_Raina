@@ -103,6 +103,7 @@ canvas {
     <span class="keys"><kbd>P</kbd> ポーズ</span>
     <span class="touch">スマホ：ドラッグで移動・自動連射</span>
     <button class="mute" id="muteBtn">音 ON</button>
+    <button class="mute" id="bgmBtn">BGM ON</button>
   </div>
 </div>
 
@@ -162,38 +163,62 @@ function selectCat(id) {
   if (selCat === id) return;
   selCat = id;
   try { localStorage.setItem('hoshikuzu-cat', id); } catch (e) {}
-  tone(id === 'tina' ? 990 : 740, 0.08, 'triangle', 0.05, 200);
+  catVoice(id, 'meow');
 }
-function meow() { tone(700, 0.18, 'triangle', 0.06, 500); setTimeout(() => tone(1100, 0.2, 'triangle', 0.05, -500), 120); }
 
 // ---------- Audio ----------
-let ac = null, muted = false;
+// master -> speakers; sfxBus (effects + cat voices) and bgmBus (music) feed the master.
+let ac = null, muted = false, bgmOn = true, master = null, sfxBus = null, bgmBus = null;
+try { bgmOn = localStorage.getItem('hoshikuzu-bgm') !== 'off'; } catch (e) {}
 const muteBtn = document.getElementById('muteBtn');
-muteBtn.addEventListener('click', () => { muted = !muted; muteBtn.textContent = muted ? '音 OFF' : '音 ON'; muteBtn.blur(); });
-function initAudio() {
-  if (ac) return;
-  try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { ac = null; }
+const bgmBtn = document.getElementById('bgmBtn');
+function syncAudioButtons() {
+  muteBtn.textContent = muted ? '音 OFF' : '音 ON';
+  bgmBtn.textContent = bgmOn ? 'BGM ON' : 'BGM OFF';
+  if (master) master.gain.value = muted ? 0 : 1;
+  if (bgmBus) bgmBus.gain.value = bgmOn ? 0.5 : 0;
 }
-function tone(freq, dur = 0.08, type = 'square', vol = 0.05, slide = 0) {
-  if (!ac || muted) return;
-  const t = ac.currentTime;
+muteBtn.addEventListener('click', () => { muted = !muted; syncAudioButtons(); muteBtn.blur(); });
+bgmBtn.addEventListener('click', () => { bgmOn = !bgmOn; try { localStorage.setItem('hoshikuzu-bgm', bgmOn ? 'on' : 'off'); } catch (e) {} syncAudioButtons(); bgmBtn.blur(); });
+syncAudioButtons();
+function initAudio() {
+  if (ac) { if (ac.state === 'suspended') ac.resume(); return; }
+  try {
+    ac = new (window.AudioContext || window.webkitAudioContext)();
+    master = ac.createGain(); master.connect(ac.destination);
+    sfxBus = ac.createGain(); sfxBus.connect(master);
+    bgmBus = ac.createGain(); bgmBus.connect(master);
+    syncAudioButtons();
+    setInterval(musicTick, 25);
+  } catch (e) { ac = null; }
+}
+function tone(freq, dur = 0.08, type = 'square', vol = 0.05, slide = 0, when = 0) {
+  if (!ac) return;
+  const t = ac.currentTime + when;
   const o = ac.createOscillator(), g = ac.createGain();
   o.type = type; o.frequency.setValueAtTime(freq, t);
   if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), t + dur);
   g.gain.setValueAtTime(vol, t);
   g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  o.connect(g).connect(ac.destination);
+  o.connect(g).connect(sfxBus);
   o.start(t); o.stop(t + dur + 0.02);
 }
+let noiseBuf = null;
+function getNoise() {
+  if (noiseBuf) return noiseBuf;
+  const len = ac.sampleRate;
+  noiseBuf = ac.createBuffer(1, len, ac.sampleRate);
+  const d = noiseBuf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+  return noiseBuf;
+}
 function noise(dur = 0.3, vol = 0.12) {
-  if (!ac || muted) return;
-  const len = Math.floor(ac.sampleRate * dur);
-  const buf = ac.createBuffer(1, len, ac.sampleRate);
-  const d = buf.getChannelData(0);
-  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+  if (!ac) return;
+  const t = ac.currentTime;
   const s = ac.createBufferSource(), g = ac.createGain();
-  s.buffer = buf; g.gain.value = vol;
-  s.connect(g).connect(ac.destination); s.start();
+  s.buffer = getNoise();
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  s.connect(g).connect(sfxBus); s.start(t); s.stop(t + dur + 0.02);
 }
 const sfx = {
   shot: () => tone(880, 0.03, 'square', 0.012, -300),
@@ -206,6 +231,144 @@ const sfx = {
   punch: () => { tone(320, 0.07, 'square', 0.05, -200); noise(0.08, 0.06); },
   warn: () => { tone(440, 0.25, 'square', 0.04); setTimeout(() => tone(440, 0.25, 'square', 0.04), 400); },
 };
+
+// ---------- Cat voices (synthesised meows) ----------
+// A sawtooth "voice" through a band-pass "mouth": opening the filter = "nya", closing = "n"/"u".
+const VOICE = { tina: { f: 560, bright: 1 }, raina: { f: 740, bright: 1.15 } };
+const VOICE_SHAPES = {
+  // [time, pitch ratio, mouth Hz] keyframes
+  meow:  { dur: 0.55, vol: 0.13, keys: [[0, 0.9, 700], [0.18, 1.35, 2500], [0.38, 1.1, 1500], [0.55, 0.8, 800]] },
+  hurt:  { dur: 0.3,  vol: 0.16, keys: [[0, 1.6, 2600], [0.05, 1.95, 3200], [0.18, 1.3, 1800], [0.3, 0.9, 1000]] },
+  happy: { dur: 0.24, vol: 0.11, keys: [[0, 1.0, 900], [0.08, 1.35, 2400], [0.16, 1.2, 1800], [0.24, 1.05, 900]] },
+  sad:   { dur: 1.0,  vol: 0.12, keys: [[0, 1.1, 900], [0.25, 1.2, 2000], [0.7, 0.75, 1200], [1.0, 0.55, 600]] },
+  trill: { dur: 0.32, vol: 0.09, keys: [[0, 1.1, 1200], [0.15, 1.3, 2000], [0.32, 1.25, 1500]], trill: 28 },
+};
+let voiceCD = 0;
+function catVoice(cat, kind, when = 0) {
+  if (!ac) return;
+  const v = VOICE[cat], sh = VOICE_SHAPES[kind], t0 = ac.currentTime + when;
+  const o = ac.createOscillator(), o2 = ac.createOscillator(), bp = ac.createBiquadFilter(), g = ac.createGain();
+  o.type = 'sawtooth'; o2.type = 'triangle';
+  bp.type = 'bandpass'; bp.Q.value = 4;
+  for (const [t, p, m] of sh.keys) {
+    const at = t0 + t, f = v.f * p;
+    if (t === 0) { o.frequency.setValueAtTime(f, at); o2.frequency.setValueAtTime(f * 2, at); bp.frequency.setValueAtTime(m * v.bright, at); }
+    else { o.frequency.linearRampToValueAtTime(f, at); o2.frequency.linearRampToValueAtTime(f * 2, at); bp.frequency.linearRampToValueAtTime(m * v.bright, at); }
+  }
+  // gentle vibrato
+  const lfo = ac.createOscillator(), lg = ac.createGain();
+  lfo.frequency.value = 7; lg.gain.value = v.f * 0.02; lfo.connect(lg); lg.connect(o.frequency);
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(sh.vol, t0 + 0.03);
+  g.gain.setValueAtTime(sh.vol, t0 + sh.dur * 0.7);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + sh.dur);
+  const mix = ac.createGain(); mix.gain.value = 1;
+  const g2 = ac.createGain(); g2.gain.value = 0.25;
+  o.connect(bp); o2.connect(g2).connect(bp); bp.connect(g);
+  if (sh.trill) {
+    const am = ac.createOscillator(), ag = ac.createGain(), trem = ac.createGain();
+    am.frequency.value = sh.trill; ag.gain.value = 0.5; trem.gain.value = 0.5;
+    am.connect(ag).connect(trem.gain); g.connect(trem).connect(sfxBus);
+    am.start(t0); am.stop(t0 + sh.dur + 0.05);
+  } else g.connect(sfxBus);
+  for (const n of [o, o2, lfo]) { n.start(t0); n.stop(t0 + sh.dur + 0.05); }
+}
+// Throttled "nyan!" when an enemy goes down, so it stays cute rather than constant.
+function killVoice(big) {
+  if (state !== 'play' || voiceCD > 0) return;
+  if (!big && Math.random() > 0.3) return;
+  const who = (partner && Math.random() < 0.3) ? partner.cat : player.cat;
+  catVoice(who, 'happy'); voiceCD = big ? 40 : 70;
+}
+
+// ---------- BGM: tiny chiptune sequencer ----------
+const NOTE = (() => { const m = {}; const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+  for (let o = 1; o <= 7; o++) names.forEach((n, i) => { m[n + o] = 440 * Math.pow(2, (o * 12 + i - 57) / 12); }); return m; })();
+// Each song: 4 bars of 16 steps. Melody tokens: note, "-" hold, "." rest. Chords give the bass line.
+const SONGS = {
+  meadow: { bpm: 132, wave: 'square', drums: 'k.h.s.h.kkh.s.h.',
+    mel: 'E5 - G5 - C6 - G5 - E5 - D5 - C5 - D5 - | E5 - - - C5 - A4 - C5 - E5 - D5 - - - | F5 - A5 - C6 - A5 - F5 - E5 - D5 - C5 - | D5 - E5 - F5 - D5 - G5 - - - . . . .',
+    chords: [['C3', 'E3', 'G3'], ['A2', 'C3', 'E3'], ['F2', 'A2', 'C3'], ['G2', 'B2', 'D3']] },
+  river: { bpm: 116, wave: 'triangle', drums: 'k...h...s...h.h.',
+    mel: 'A4 C5 F5 C5 A5 - G5 F5 E5 - F5 - C5 - - - | D5 F5 A5 F5 D6 - C6 A5 G5 - A5 - F5 - - - | D5 F5 A#5 F5 D6 - C6 A#5 A5 - G5 - F5 - - - | E5 G5 C6 G5 E5 - D5 - C5 - - - . . . .',
+    chords: [['F2', 'A2', 'C3'], ['D2', 'F2', 'A2'], ['A#1', 'D2', 'F2'], ['C2', 'E2', 'G2']] },
+  mountain: { bpm: 144, wave: 'square', drums: 'k.hks.h.k.hks.hh',
+    mel: 'G4 - B4 - D5 - G5 - - - F#5 - G5 - A5 - | B5 - - - G5 - E5 - - - D5 - E5 - G5 - | E5 - - - C5 - E5 - G5 - - - E5 - C5 - | D5 - F#5 - A5 - - - F#5 - D5 - . . . .',
+    chords: [['G2', 'B2', 'D3'], ['E2', 'G2', 'B2'], ['C2', 'E2', 'G2'], ['D2', 'F#2', 'A2']] },
+  beach: { bpm: 126, wave: 'square', drums: 'k.hsk.hsk.hsk.hs',
+    mel: 'F#5 . F#5 . A5 - F#5 . D5 . E5 . F#5 - - - | D5 . D5 . F#5 - D5 . B4 . C#5 . D5 - - - | B4 . D5 . G5 - F#5 . E5 . D5 . E5 - - - | C#5 - E5 - A5 - G5 - F#5 - E5 - . . . .',
+    chords: [['D2', 'F#2', 'A2'], ['B1', 'D2', 'F#2'], ['G1', 'B1', 'D2'], ['A1', 'C#2', 'E2']] },
+  boss: { bpm: 156, wave: 'sawtooth', drums: 'k.hks.h.k.hks.ss',
+    mel: 'A4 A4 . A4 C5 . A4 . E5 - D5 - C5 - B4 - | C5 C5 . C5 F5 . C5 . A5 - G5 - F5 - E5 - | D5 D5 . D5 G5 . D5 . B5 - A5 - G5 - F5 - | E5 - G#5 - B5 - E6 - D6 - B5 - G#5 - E5 -',
+    chords: [['A2', 'C3', 'E3'], ['F2', 'A2', 'C3'], ['G2', 'B2', 'D3'], ['E2', 'G#2', 'B2']] },
+};
+for (const s of Object.values(SONGS)) {
+  s.steps = s.mel.replace(/\|/g, ' ').trim().split(/\s+/);
+  const pat = [0, -1, 0, -1, 2, -1, 0, -1, 0, -1, 2, -1, 1, -1, 2, -1];
+  s.bass = s.chords.flatMap(ch => pat.map(i => i < 0 ? null : ch[i]));
+}
+let song = null, songKey = null, step = 0, nextT = 0;
+function playSong(key) {
+  if (key === songKey) return;
+  songKey = key; song = key ? SONGS[key] : null; step = 0;
+  if (ac) nextT = ac.currentTime + 0.08;
+}
+function holdLen(s, i) { let n = 1; while (s.steps[(i + n) % s.steps.length] === '-' && n < 16) n++; return n; }
+function musicTick() {
+  if (!ac || !song || state === 'pause') { if (ac) nextT = Math.max(nextT, ac.currentTime + 0.05); return; }
+  const sd = 60 / song.bpm / 4;
+  while (nextT < ac.currentTime + 0.12) {
+    const i = step % 64, t = nextT;
+    const m = song.steps[i];
+    if (m && NOTE[m]) seqNote(NOTE[m], t, sd * holdLen(song, i) * 0.92, song.wave, 0.045);
+    const b = song.bass[i];
+    if (b) seqNote(NOTE[b], t, sd * 1.6, 'triangle', 0.11);
+    const d = song.drums[i % 16];
+    if (d === 'k') drum(t, 'k'); else if (d === 's') drum(t, 's'); else if (d === 'h') drum(t, 'h');
+    step++; nextT += sd;
+  }
+}
+function seqNote(f, t, dur, wave, vol) {
+  const o = ac.createOscillator(), g = ac.createGain(), lp = ac.createBiquadFilter();
+  o.type = wave; o.frequency.setValueAtTime(f, t);
+  lp.type = 'lowpass'; lp.frequency.value = wave === 'triangle' ? 4000 : 2200;
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + 0.01);
+  g.gain.exponentialRampToValueAtTime(vol * 0.55, t + Math.min(0.12, dur));
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(lp).connect(g).connect(bgmBus); o.start(t); o.stop(t + dur + 0.02);
+}
+function drum(t, kind) {
+  if (kind === 'k') {
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.frequency.setValueAtTime(130, t); o.frequency.exponentialRampToValueAtTime(45, t + 0.12);
+    g.gain.setValueAtTime(0.28, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.14);
+    o.connect(g).connect(bgmBus); o.start(t); o.stop(t + 0.16);
+    return;
+  }
+  const s = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
+  s.buffer = getNoise();
+  f.type = kind === 's' ? 'bandpass' : 'highpass'; f.frequency.value = kind === 's' ? 1800 : 7000;
+  const dur = kind === 's' ? 0.12 : 0.035, vol = kind === 's' ? 0.09 : 0.035;
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  s.connect(f).connect(g).connect(bgmBus); s.start(t, Math.random() * 0.5); s.stop(t + dur + 0.02);
+}
+function jingle() {
+  if (!ac) return;
+  [['C5', 0], ['E5', 0.1], ['G5', 0.2], ['C6', 0.3], ['G5', 0.45], ['C6', 0.55]].forEach(([n, w]) => tone(NOTE[n], w > 0.5 ? 0.5 : 0.14, 'square', 0.05, 0, w));
+}
+function updateMusic() {
+  let want = null;
+  if (state === 'title') want = 'meadow';
+  else if (state === 'play' || state === 'pause') {
+    if (banner && banner.clear) want = null;
+    else if (boss && !boss.dead) want = 'boss';
+    else if (banner && banner.warn) want = null;
+    else want = biomeOf(stage);
+  }
+  playSong(want);
+  if (voiceCD > 0) voiceCD--;
+}
 
 // ---------- Input ----------
 const keys = new Set();
@@ -288,7 +451,7 @@ function startStage() {
 }
 
 function onStartPress() {
-  if (state === 'title') { resetGame(); state = 'play'; meow(); }
+  if (state === 'title') { resetGame(); state = 'play'; catVoice(selCat, 'meow'); catVoice(partnerOf(selCat), 'meow', 0.35); }
   else if (state === 'over' && overT > 40) { state = 'title'; newHi = false; }
   else if (state === 'pause') state = 'play';
 }
@@ -392,7 +555,7 @@ function tryPunch(c, sc) {
   for (const e of enemies) if (!e.dead && near(e, reach + e.r + 6)) { damageEnemy(e, Math.round(6 * sc)); hit++; }
   for (const b of eShots) if (near(b, reach)) { b.dead = true; score += 20; burst(b.x, b.y, 3, C.paper, 2); hit++; }
   if (boss && !boss.dead && !boss.enter && Math.hypot(boss.x - c.x, boss.y - c.y) < reach + boss.r + 6) { damageBoss(Math.round(10 * sc)); hit++; }
-  if (hit && Math.random() < 0.35) popup(c.x + c.side * 18, c.y - 26, 'ニャッ！', C.amber);
+  if (hit && Math.random() < 0.35) { popup(c.x + c.side * 18, c.y - 26, 'ニャッ！', C.amber); if (voiceCD <= 0) { catVoice(c.cat, 'happy'); voiceCD = 50; } }
 }
 function partnerFire() {
   const col = CATS[partner.cat].shot;
@@ -425,6 +588,7 @@ function damageEnemy(e, dmg) {
   if (e.hp <= 0) {
     e.dead = true;
     score += e.score; popup(e.x, e.y, e.score);
+    killVoice(e.type === 'turret');
     burst(e.x, e.y, e.type === 'turret' ? 26 : 12, e.type === 'turret' ? C.amber : C.mint, e.type === 'turret' ? 4 : 3);
     sfx.boom();
     if (e.type === 'turret') { shake = Math.max(shake, 6); items.push(mkItem(Math.random() < 0.75 ? 'P' : 'B', e.x, e.y)); }
@@ -439,7 +603,8 @@ function damageBoss(dmg) {
     const bonus = 10000 * stage;
     score += bonus;
     eShots.length = 0;
-    flash = 24; shake = 30; sfx.big();
+    flash = 24; shake = 30; sfx.big(); jingle();
+    catVoice(player.cat, 'meow', 0.7); catVoice(partner.cat, 'meow', 1.0);
     for (let i = 0; i < 6; i++) setTimeout(() => { burst(boss.x + rand(-40, 40), boss.y + rand(-30, 30), 30, i % 2 ? C.amber : C.rose, 5); sfx.boom(); }, i * 140);
     banner = { text: 'STAGE CLEAR', sub: `ボーナス ${bonus.toLocaleString()}`, t: 220, clear: true };
     items.push(mkItem('P', boss.x - 20, boss.y), mkItem('B', boss.x + 20, boss.y));
@@ -451,12 +616,12 @@ function hitPlayer() {
   if (player.inv > 0 || !player.alive) return;
   player.alive = false; player.respawn = 70;
   burst(player.x, player.y, 40, C.amber, 5); burst(player.x, player.y, 20, C.paper, 3);
-  shake = 20; flash = 10; sfx.die();
+  shake = 20; flash = 10; noise(0.4, 0.1); catVoice(player.cat, 'hurt');
   popup(player.x, player.y - 20, 'にゃっ！', C.rose);
   player.lives--;
   if (player.lives < 0) {
     player.respawn = 0;
-    setTimeout(() => { state = 'over'; overT = 0; if (score > hiScore) { hiScore = score; saveHi(); newHi = true; } }, 900);
+    setTimeout(() => { state = 'over'; overT = 0; if (score > hiScore) { hiScore = score; saveHi(); newHi = true; } catVoice(player.cat, 'sad'); catVoice(partner.cat, 'sad', 0.5); }, 900);
   }
 }
 let overT = 0, newHi = false;
@@ -578,7 +743,7 @@ function update() {
       const dist = Math.hypot(it.x - player.x, it.y - player.y);
       if (player.y < 160 || dist < 60) { it.x += (player.x - it.x) * 0.12; it.y += (player.y - it.y) * 0.12; }
       if (dist < 16) {
-        it.dead = true; sfx.item();
+        it.dead = true; sfx.item(); catVoice(player.cat, 'trill', 0.1);
         if (it.kind === 'P') { if (player.level < 3) { player.level++; popup(it.x, it.y, 'POWER UP', C.amber); } else { score += 2000; popup(it.x, it.y, '2000', C.amber); } }
         else { if (player.bombs < 5) { player.bombs++; popup(it.x, it.y, 'BOMB +1', C.rose); } else { score += 2000; popup(it.x, it.y, '2000', C.rose); } }
       }
@@ -1224,6 +1389,7 @@ const STEP = 1000 / 60;
 function loop(now) {
   acc += Math.min(100, now - last); last = now;
   while (acc >= STEP) { update(); acc -= STEP; }
+  updateMusic();
   draw();
   const showPad = state === 'play' || state === 'pause';
   if (pad.style.visibility !== (showPad ? 'visible' : 'hidden')) pad.style.visibility = showPad ? 'visible' : 'hidden';
