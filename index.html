@@ -72,6 +72,7 @@ canvas {
 .entry-title { font-size: 20px; color: var(--amber); }
 .entry-score { font-size: 15px; color: var(--paper); font-variant-numeric: tabular-nums; }
 .entry-box label { font-size: 12px; color: var(--dim); }
+.entry-note { font-size: 11px; color: var(--dim); text-align: left !important; }
 .entry-box input { font-family: var(--pixel); font-size: 20px; padding: 8px 10px; border-radius: 4px; border: 2px solid var(--line); background: var(--night); color: var(--paper); -webkit-user-select: text; user-select: text; touch-action: manipulation; }
 .entry-box input:focus-visible { outline: 2px solid var(--amber); outline-offset: 1px; }
 .entry-box button { font-family: var(--pixel); font-size: 16px; padding: 10px; border-radius: 4px; border: 0; background: var(--amber); color: var(--night); cursor: pointer; }
@@ -111,6 +112,7 @@ canvas {
         <p class="entry-title">ランキング入り！</p>
         <p class="entry-score" id="entryScore"></p>
         <label for="entryName">なまえ（8文字まで）</label>
+        <p class="entry-note" id="entryNote" hidden>みんなのランキングにのります。本名はさけてね</p>
         <input id="entryName" maxlength="8" placeholder="ななし" enterkeyhint="done">
         <button type="submit" id="entryOk">とうろく</button>
       </form>
@@ -216,7 +218,42 @@ function addRank(k, entry) {
   return ranks[k].indexOf(entry);
 }
 hiScore = topScore(diffKey);
-let rankView = { k: 'normal', hl: -1 }, runCleared = false;
+let rankView = { k: 'normal', hl: -1, src: 'local' }, runCleared = false;
+
+// ---------- みんなのランキング (Firebase Firestore over plain REST) ----------
+// Firebase web API keys are meant to be public; access is limited by the Firestore security rules.
+const FB = { projectId: 'tina-raina-ranking', apiKey: 'AIzaSyCW3Eyax6XtdJgc_JcxqWERCwh0jiuSXuM' };
+// Shared ranking runs in the phone app (GitHub Pages) and the Windows app; the Claude preview page can't reach outside sites.
+const ONLINE = !!(FB.projectId && FB.apiKey) && /(^|\.)github\.io$|^localhost$|^127\.0\.0\.1$/.test(location.hostname);
+const FS = () => `https://firestore.googleapis.com/v1/projects/${FB.projectId}/databases/(default)/documents`;
+const online = { easy: { list: [], status: 'idle' }, normal: { list: [], status: 'idle' }, hard: { list: [], status: 'idle' } };
+const fsVal = v => v == null ? null : v.stringValue ?? (v.integerValue != null ? +v.integerValue : v.booleanValue ?? v.doubleValue);
+async function fetchOnline(k) {
+  if (!ONLINE) return;
+  online[k].status = 'loading';
+  try {
+    const r = await fetch(`${FS()}:runQuery?key=${FB.apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ structuredQuery: { from: [{ collectionId: 'scores_' + k }], orderBy: [{ field: { fieldPath: 'score' }, direction: 'DESCENDING' }], limit: 10 } }) });
+    if (!r.ok) throw new Error(r.status);
+    const rows = await r.json();
+    online[k].list = rows.filter(x => x.document).map(x => { const f = x.document.fields || {}; return { name: fsVal(f.name), score: fsVal(f.score), stage: fsVal(f.stage), cat: fsVal(f.cat), clear: fsVal(f.clear), id: x.document.name }; });
+    online[k].status = 'ok';
+  } catch (e) { online[k].status = 'error'; }
+}
+async function postOnline(k, e) {
+  if (!ONLINE) return null;
+  try {
+    const r = await fetch(`${FS()}/scores_${k}?key=${FB.apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields: { name: { stringValue: e.name }, score: { integerValue: String(e.score) }, stage: { integerValue: String(e.stage) }, cat: { stringValue: e.cat }, clear: { booleanValue: !!e.clear } } }) });
+    if (!r.ok) throw new Error(r.status);
+    return (await r.json()).name;
+  } catch (err) { return null; }
+}
+function openRanking(k, src, hl = -1) {
+  rankView = { k, hl, src: src || (ONLINE ? 'online' : 'local') };
+  state = 'ranking';
+  if (rankView.src === 'online') fetchOnline(k);
+}
 
 function selectCat(id) {
   if (selCat === id) return;
@@ -447,8 +484,9 @@ addEventListener('keydown', e => {
   if (state === 'splash') { leaveSplash(); return; }
   if (state === 'title' && (k === 'arrowup' || k === 'w')) setDiff(DIFF_KEYS[Math.max(0, DIFF_KEYS.indexOf(diffKey) - 1)]);
   if (state === 'title' && (k === 'arrowdown' || k === 's')) setDiff(DIFF_KEYS[Math.min(2, DIFF_KEYS.indexOf(diffKey) + 1)]);
-  if (state === 'title' && k === 'r') { rankView = { k: diffKey, hl: -1 }; state = 'ranking'; return; }
-  if (state === 'ranking' && (k === 'arrowleft' || k === 'a' || k === 'arrowright' || k === 'd')) { const i = DIFF_KEYS.indexOf(rankView.k) + (k === 'arrowleft' || k === 'a' ? -1 : 1); rankView = { k: DIFF_KEYS[(i + 3) % 3], hl: -1 }; return; }
+  if (state === 'title' && k === 'r') { openRanking(diffKey); return; }
+  if (state === 'ranking' && (k === 'arrowleft' || k === 'a' || k === 'arrowright' || k === 'd')) { const i = DIFF_KEYS.indexOf(rankView.k) + (k === 'arrowleft' || k === 'a' ? -1 : 1); openRanking(DIFF_KEYS[(i + 3) % 3], rankView.src); return; }
+  if (state === 'ranking' && ONLINE && (k === 'arrowup' || k === 'arrowdown' || k === 'tab')) { e.preventDefault(); openRanking(rankView.k, rankView.src === 'online' ? 'local' : 'online'); return; }
   if (state === 'ranking' && k === 'escape') { state = 'title'; return; }
   if (state === 'title' && (k === 'arrowleft' || k === 'a')) selectCat('tina');
   if (state === 'title' && (k === 'arrowright' || k === 'd')) selectCat('raina');
@@ -491,13 +529,14 @@ cv.addEventListener('pointerdown', e => {
       }
     }
     for (let i = 0; i < 3; i++) { const cx = W / 2 + (i - 1) * 92; if (Math.abs(p.x - cx) < 42 && Math.abs(p.y - DIFF_Y) < 14) { setDiff(DIFF_KEYS[i]); return; } }
-    if (p.x > RANK_BTN.x && p.x < RANK_BTN.x + RANK_BTN.w && p.y > RANK_BTN.y && p.y < RANK_BTN.y + RANK_BTN.h) { rankView = { k: diffKey, hl: -1 }; state = 'ranking'; return; }
+    if (p.x > RANK_BTN.x && p.x < RANK_BTN.x + RANK_BTN.w && p.y > RANK_BTN.y && p.y < RANK_BTN.y + RANK_BTN.h) { openRanking(diffKey); return; }
     if (p.y > CARD_Y + CARD_H) onStartPress();
     return;
   }
   if (state === 'ranking') {
     const p = toGame(e);
-    for (let i = 0; i < 3; i++) { const cx = W / 2 + (i - 1) * 96; if (Math.abs(p.x - cx) < 44 && Math.abs(p.y - 116) < 16) { rankView = { k: DIFF_KEYS[i], hl: -1 }; return; } }
+    for (let i = 0; i < 3; i++) { const cx = W / 2 + (i - 1) * 96; if (Math.abs(p.x - cx) < 44 && Math.abs(p.y - 120) < 16) { openRanking(DIFF_KEYS[i], rankView.src); return; } }
+    if (ONLINE && Math.abs(p.y - 86) < 14) { const src = p.x < W / 2 ? 'online' : 'local'; if (src !== rankView.src) openRanking(rankView.k, src); return; }
     state = 'title'; return;
   }
   if (state === 'entry') return;
@@ -829,22 +868,28 @@ function hitPlayer() {
 let overT = 0, newHi = false;
 const entryEl = document.getElementById('entry'), entryForm = document.getElementById('entryForm'), entryName = document.getElementById('entryName');
 function finishRun() {
-  if (qualifies(diffKey, score)) {
+  if (qualifies(diffKey, score) || (ONLINE && score > 0)) {
     state = 'entry';
     document.getElementById('entryScore').textContent = `${D().label}  ${score.toLocaleString()} 点`;
     try { entryName.value = localStorage.getItem('tina-raina-name') || ''; } catch (e) { entryName.value = ''; }
+    document.getElementById('entryNote').hidden = !ONLINE;
     entryEl.hidden = false;
     setTimeout(() => { try { entryName.focus(); } catch (e) {} }, 30);
-  } else { rankView = { k: diffKey, hl: -1 }; state = 'ranking'; }
+  } else openRanking(diffKey);
 }
 entryForm.addEventListener('submit', e => {
   e.preventDefault();
   const name = (entryName.value || '').trim().slice(0, 8) || 'ななし';
   try { localStorage.setItem('tina-raina-name', name); } catch (err) {}
-  const hl = addRank(diffKey, { name, score, stage: runCleared ? FINAL_STAGE : stage, cat: player.cat, clear: runCleared });
+  const hl = qualifies(diffKey, score) ? addRank(diffKey, { name, score, stage: runCleared ? FINAL_STAGE : stage, cat: player.cat, clear: runCleared }) : -1;
   entryEl.hidden = true; entryName.blur();
   hiScore = topScore(diffKey);
-  rankView = { k: diffKey, hl }; state = 'ranking';
+  const entry = { name, score, stage: runCleared ? FINAL_STAGE : stage, cat: player.cat, clear: runCleared };
+  if (ONLINE) {
+    const k = diffKey;
+    rankView = { k, hl: -1, src: 'online' }; state = 'ranking'; online[k].status = 'loading';
+    postOnline(k, entry).then(id => fetchOnline(k).then(() => { if (rankView.k === k && rankView.src === 'online') rankView.hl = online[k].list.findIndex(x => x.id === id); }));
+  } else rankView = { k: diffKey, hl, src: 'local' }, state = 'ranking';
   catVoice(player.cat, 'happy'); catVoice(partner.cat, 'happy', 0.2);
 });
 
@@ -2045,16 +2090,25 @@ function drawEnding() {
 }
 function drawRanking() {
   ctx.fillStyle = 'rgba(11,14,42,0.85)'; ctx.fillRect(0, 0, W, H);
-  const k = rankView.k, list = ranks[k];
-  text('ランキング', W / 2, 70, 26, C.amber);
-  text('このスマホ・パソコンの記録', W / 2, 92, 10, C.dim);
+  const k = rankView.k, isOn = rankView.src === 'online', list = isOn ? online[k].list : ranks[k];
+  text('ランキング', W / 2, 52, 26, C.amber);
+  if (ONLINE) {
+    [['online', 'みんな'], ['local', 'この端末']].forEach(([src, label], i) => {
+      const cx = W / 2 + (i ? 56 : -56), sel = rankView.src === src;
+      ctx.fillStyle = sel ? C.paper : 'rgba(22,27,71,0.9)'; ctx.fillRect(cx - 52, 74, 104, 24);
+      ctx.strokeStyle = sel ? C.paper : C.line; ctx.lineWidth = 1; ctx.strokeRect(cx - 51.5, 74.5, 103, 23);
+      text(label, cx, 87, 13, sel ? C.night : C.paper);
+    });
+  } else text('このスマホ・パソコンの記録', W / 2, 86, 10, C.dim);
+  if (isOn && online[k].status === 'loading' && !list.length) { text('よみこみ中…', W / 2, 260, 14, C.dim); }
+  else if (isOn && online[k].status === 'error') { text('つながりませんでした', W / 2, 250, 14, C.rose); text('ネットにつながっているか たしかめてね', W / 2, 276, 11, C.dim); }
   DIFF_KEYS.forEach((key, i) => {
     const d = DIFFS[key], cx = W / 2 + (i - 1) * 96, sel = key === k;
-    ctx.fillStyle = sel ? d.col : 'rgba(22,27,71,0.9)'; ctx.fillRect(cx - 44, 104, 88, 26);
-    ctx.strokeStyle = sel ? '#fff6e0' : C.line; ctx.lineWidth = sel ? 2 : 1; ctx.strokeRect(cx - 43.5, 104.5, 87, 25);
-    text(d.label, cx, 118, 13, sel ? C.night : C.paper);
+    ctx.fillStyle = sel ? d.col : 'rgba(22,27,71,0.9)'; ctx.fillRect(cx - 44, 107, 88, 26);
+    ctx.strokeStyle = sel ? '#fff6e0' : C.line; ctx.lineWidth = sel ? 2 : 1; ctx.strokeRect(cx - 43.5, 107.5, 87, 25);
+    text(d.label, cx, 121, 13, sel ? C.night : C.paper);
   });
-  if (!list.length) text('まだ記録がないよ', W / 2, 260, 14, C.dim);
+  if (!list.length && !(isOn && online[k].status !== 'ok')) text('まだ記録がないよ', W / 2, 260, 14, C.dim);
   list.forEach((e, i) => {
     const y = 160 + i * 38, hl = i === rankView.hl;
     if (hl) { ctx.fillStyle = `rgba(255,181,71,${0.18 + 0.1 * Math.sin(frame * 0.15)})`; ctx.fillRect(16, y - 16, W - 32, 32); }
@@ -2062,9 +2116,9 @@ function drawRanking() {
     if (medal) { E(36, y, 11, 11, medal); text(String(i + 1), 36, y + 1, 12, C.night); }
     else text(String(i + 1), 36, y + 1, 13, C.dim);
     if (CATS[e.cat]) drawCat(64, y + 4, 0, e.cat, 0.55);
-    text(e.name, 82, y + 1, 14, hl ? C.amber : C.paper, 'left');
+    text(String(e.name || '').slice(0, 8), 82, y + 1, 14, hl ? C.amber : C.paper, 'left');
     text(e.clear ? '★クリア' : e.stage ? `ST${e.stage}` : '', 232, y + 1, 10, e.clear ? C.amber : C.dim, 'right');
-    text(e.score.toLocaleString(), W - 22, y + 1, 14, hl ? C.amber : C.paper, 'right');
+    text(Number(e.score || 0).toLocaleString(), W - 22, y + 1, 14, hl ? C.amber : C.paper, 'right');
   });
   text('◀ ▶ でむずかしさ切りかえ', W / 2, H - 46, 10, C.dim);
   if (Math.floor(frame / 30) % 2) text('タップ / Enter でタイトルへ', W / 2, H - 24, 12, C.paper);
