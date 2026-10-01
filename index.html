@@ -176,7 +176,7 @@ function syncAudioButtons() {
   muteBtn.textContent = muted ? '音 OFF' : '音 ON';
   bgmBtn.textContent = bgmOn ? 'BGM ON' : 'BGM OFF';
   if (master) master.gain.value = muted ? 0 : 1;
-  if (bgmBus) bgmBus.gain.value = bgmOn ? 0.5 : 0;
+  if (bgmBus) bgmBus.gain.value = bgmOn ? 1.0 : 0;
 }
 muteBtn.addEventListener('click', () => { muted = !muted; syncAudioButtons(); muteBtn.blur(); });
 bgmBtn.addEventListener('click', () => { bgmOn = !bgmOn; try { localStorage.setItem('hoshikuzu-bgm', bgmOn ? 'on' : 'off'); } catch (e) {} syncAudioButtons(); bgmBtn.blur(); });
@@ -228,6 +228,7 @@ const sfx = {
   item: () => { tone(660, 0.06, 'square', 0.04); setTimeout(() => tone(990, 0.08, 'square', 0.04), 60); },
   die: () => { noise(0.6, 0.16); tone(400, 0.6, 'sawtooth', 0.07, -360); },
   bomb: () => { noise(0.8, 0.14); tone(60, 0.9, 'sine', 0.15, 200); },
+  bossHit: () => { tone(190, 0.05, 'square', 0.035, -90); },
   punch: () => { tone(320, 0.07, 'square', 0.05, -200); noise(0.08, 0.06); },
   warn: () => { tone(440, 0.25, 'square', 0.04); setTimeout(() => tone(440, 0.25, 'square', 0.04), 400); },
 };
@@ -273,6 +274,31 @@ function catVoice(cat, kind, when = 0) {
   } else g.connect(sfxBus);
   for (const n of [o, o2, lfo]) { n.start(t0); n.stop(t0 + sh.dur + 0.05); }
 }
+// ---------- Mandrill voice ----------
+function apeVoice(kind, when = 0) {
+  if (!ac) return;
+  const t0 = ac.currentTime + when;
+  const call = (t, f0, f1, f2, dur, mouth, vol, wave = 'sawtooth') => {
+    const o = ac.createOscillator(), bp = ac.createBiquadFilter(), g = ac.createGain();
+    o.type = wave; o.frequency.setValueAtTime(f0, t); o.frequency.linearRampToValueAtTime(f1, t + dur * 0.35); o.frequency.linearRampToValueAtTime(f2, t + dur);
+    bp.type = 'bandpass'; bp.frequency.value = mouth; bp.Q.value = 3;
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.02); g.gain.setValueAtTime(vol, t + dur * 0.6); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(bp).connect(g).connect(sfxBus); o.start(t); o.stop(t + dur + 0.03);
+  };
+  const rasp = (t, dur, f, vol) => {
+    const s = ac.createBufferSource(), bp = ac.createBiquadFilter(), g = ac.createGain();
+    s.buffer = getNoise(); bp.type = 'bandpass'; bp.frequency.value = f; bp.Q.value = 1.5;
+    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    s.connect(bp).connect(g).connect(sfxBus); s.start(t, Math.random() * 0.4); s.stop(t + dur + 0.02);
+  };
+  if (kind === 'grunt') { call(t0, 200, 240, 130, 0.2, 650, 0.16); rasp(t0, 0.15, 500, 0.06); }
+  if (kind === 'scream') { call(t0, 900, 1400, 1100, 0.42, 2200, 0.13); call(t0, 450, 700, 550, 0.42, 1200, 0.06, 'square'); rasp(t0, 0.35, 2500, 0.05); }
+  if (kind === 'roar') { call(t0, 120, 170, 90, 1.1, 500, 0.22); call(t0, 240, 330, 180, 1.1, 900, 0.08, 'square'); rasp(t0, 1.0, 600, 0.12); }
+  if (kind === 'laugh') { for (let i = 0; i < 4; i++) call(t0 + i * 0.11, 760, 980, 820, 0.09, 1800, 0.11); }
+  if (kind === 'dizzy') { call(t0, 700, 520, 140, 1.2, 1000, 0.13); rasp(t0, 0.5, 900, 0.05); }
+}
+const APE_CRIES = ['ウキッ！', 'キーッ！', 'ウホッ！', 'ムキーッ！'];
+
 // Throttled "nyan!" when an enemy goes down, so it stays cute rather than constant.
 function killVoice(big) {
   if (state !== 'play' || voiceCD > 0) return;
@@ -320,9 +346,9 @@ function musicTick() {
   while (nextT < ac.currentTime + 0.12) {
     const i = step % 64, t = nextT;
     const m = song.steps[i];
-    if (m && NOTE[m]) seqNote(NOTE[m], t, sd * holdLen(song, i) * 0.92, song.wave, 0.045);
+    if (m && NOTE[m]) seqNote(NOTE[m], t, sd * holdLen(song, i) * 0.92, song.wave, 0.075);
     const b = song.bass[i];
-    if (b) seqNote(NOTE[b], t, sd * 1.6, 'triangle', 0.11);
+    if (b) seqNote(NOTE[b], t, sd * 1.6, 'triangle', 0.16);
     const d = song.drums[i % 16];
     if (d === 'k') drum(t, 'k'); else if (d === 's') drum(t, 's'); else if (d === 'h') drum(t, 'h');
     step++; nextT += sd;
@@ -580,7 +606,8 @@ function burst(x, y, n, col, sp = 3) {
     parts.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: rand(20, 40), max: 40, col, s: rand(1.5, 3.5) });
   }
 }
-function popup(x, y, text, col = C.paper) { popups.push({ x, y, text, col, t: 50 }); }
+function popup(x, y, text, col = C.paper, size = 11, life = 50, vy = 0.6) { popups.push({ x, y, text, col, t: life, size, vy }); }
+function bossSay(text, col, size, life) { popups = popups.filter(q => q.vy !== 0.15); popup(clamp(boss.x, 70, W - 70), boss.y + 64, text, col, size, life, 0.15); }
 
 function damageEnemy(e, dmg) {
   if (e.dead) return;
@@ -597,9 +624,19 @@ function damageEnemy(e, dmg) {
 }
 function damageBoss(dmg) {
   if (!boss || boss.dead) return;
+  const before = boss.hp / boss.max;
   boss.hp -= dmg; boss.hitT = 3;
+  const after = boss.hp / boss.max;
+  if (boss.hp > 0 && before >= 0.5 && after < 0.5) {
+    boss.rage = 90; shake = Math.max(shake, 16); flash = 8; apeVoice('roar');
+    bossSay('ウッキーーー！！', C.rose, 20, 90);
+  } else if (boss.hp > 0 && Math.ceil(before * 10) !== Math.ceil(after * 10)) {
+    boss.rage = Math.max(boss.rage || 0, 40); apeVoice(Math.random() < 0.5 ? 'scream' : 'grunt');
+    bossSay(APE_CRIES[Math.floor(Math.random() * APE_CRIES.length)], C.amber, 16, 60);
+  }
   if (boss.hp <= 0) {
-    boss.dead = true;
+    boss.dead = true; boss.deathT = 110; boss.rage = 0;
+    apeVoice('dizzy'); bossSay('ウキュ〜…', C.paper, 18, 100);
     const bonus = 10000 * stage;
     score += bonus;
     eShots.length = 0;
@@ -615,6 +652,7 @@ function mkItem(kind, x, y) { return { kind, x, y, vy: -2.5, t: 0 }; }
 function hitPlayer() {
   if (player.inv > 0 || !player.alive) return;
   player.alive = false; player.respawn = 70;
+  if (boss && !boss.dead && !boss.enter) { apeVoice('laugh', 0.35); bossSay('ウッキッキ♪', C.amber, 16, 70); boss.rage = 30; }
   burst(player.x, player.y, 40, C.amber, 5); burst(player.x, player.y, 20, C.paper, 3);
   shake = 20; flash = 10; noise(0.4, 0.1); catVoice(player.cat, 'hurt');
   popup(player.x, player.y - 20, 'にゃっ！', C.rose);
@@ -697,7 +735,8 @@ function update() {
   // boss
   if (boss && !boss.dead) {
     const b = boss; b.t++; if (b.hitT) b.hitT--;
-    if (b.enter) { b.y += 1.4; if (b.y >= 120) { b.enter = false; b.t = 0; } }
+    if (b.enter) { b.y += 1.4; if (b.y >= 120) { b.enter = false; b.t = 0; b.rage = 70; apeVoice('roar'); shake = Math.max(shake, 10); bossSay('ウホホーッ！', C.rose, 20, 80); } }
+    if (b.rage > 0) b.rage--;
     else {
       b.x = W / 2 + Math.sin(b.t / 80) * 100;
       b.y = 120 + Math.sin(b.t / 47) * 18;
@@ -715,6 +754,8 @@ function update() {
     if (player.alive && Math.hypot(b.x - player.x, b.y - player.y) < b.r + 3) hitPlayer();
   }
 
+  if (boss && boss.dead && boss.deathT > 0) boss.deathT--;
+
   // player shots
   for (const s of pShots) {
     s.x += s.vx; s.y += s.vy;
@@ -722,7 +763,7 @@ function update() {
       if (!e.dead && Math.abs(s.x - e.x) < e.r && Math.abs(s.y - e.y) < e.r) { s.dead = true; damageEnemy(e, 1); if (!e.dead) sfx.hit(); break; }
     }
     if (!s.dead && boss && !boss.dead && !boss.enter && Math.abs(s.x - boss.x) < boss.r + 4 && Math.abs(s.y - boss.y) < boss.r) {
-      s.dead = true; damageBoss(1); score += 10;
+      s.dead = true; damageBoss(1); score += 10; if (frame % 4 === 0) sfx.bossHit();
       if (Math.random() < 0.3) burst(s.x, s.y, 1, C.paper, 1.5);
     }
   }
@@ -757,7 +798,7 @@ function update() {
 function updateFx() {
   for (const p of parts) { p.x += p.vx; p.y += p.vy; p.vx *= 0.96; p.vy *= 0.96; p.life--; }
   parts = (parts || []).filter(p => p.life > 0);
-  for (const p of popups || []) { p.y -= 0.6; p.t--; }
+  for (const p of popups || []) { p.y -= p.vy ?? 0.6; p.t--; }
   if (popups) popups = popups.filter(p => p.t > 0);
   if (flash > 0) flash--;
   if (shake > 0) shake *= 0.86, shake < 0.4 && (shake = 0);
@@ -1015,16 +1056,27 @@ function drawEnemy(e) {
 
 function drawBoss(b) {
   // mandrill: red nose ridge, blue ridged cheeks, golden beard
-  ctx.save(); ctx.translate(b.x, b.y);
+  ctx.save();
+  const rage = b.rage || 0, dying = b.dead;
+  // flinch while being hit, shake with rage, tumble when defeated
+  const jx = b.hitT > 0 ? rand(-1.2, 1.2) : 0, jy = b.hitT > 0 ? rand(-0.8, 0.8) : 0;
+  const rx = rage > 0 ? Math.sin(rage * 1.3) * 2.5 : 0;
+  if (dying) {
+    const k = 110 - b.deathT;
+    ctx.globalAlpha = Math.min(1, b.deathT / 40);
+    ctx.translate(b.x + Math.sin(k * 0.3) * 4, b.y + k * k * 0.012);
+    ctx.rotate(k * 0.04); const sc = 1 - k * 0.003; ctx.scale(sc, sc);
+  } else ctx.translate(b.x + jx + rx, b.y + jy);
   const p2 = b.hp < b.max * 0.5;
+  const bossFlash = b.hitT > 0 && frame % 6 < 2;
   if (p2) { ctx.strokeStyle = `rgba(255,93,143,${0.35 + Math.sin(b.t * 0.2) * 0.15})`; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(0, 2, 50 + Math.sin(b.t * 0.1) * 2, 0, TAU); ctx.stroke(); }
   ctx.rotate(Math.sin(b.t / 60) * 0.05);
-  hitFlash(b.hitT > 0);
+  ctx.filter = bossFlash ? 'brightness(1.5)' : 'none';
   const fur = '#6d6040', furD = '#4a412b';
   // shoulders and arms
   for (const s of [-1, 1]) {
     E(s * 36, 16, 15, 19, furD, s * 0.3);
-    E(s * 44, 30 + Math.sin(b.t * 0.08 + s) * 3, 7, 6, '#2b2419');
+    if (!(rage > 0)) E(s * 44, 30 + Math.sin(b.t * 0.08 + s) * 3, 7, 6, '#2b2419');
   }
   // mane with a pointed crest
   ctx.fillStyle = fur; ctx.beginPath();
@@ -1053,9 +1105,21 @@ function drawBoss(b) {
   E(-2.6, 20, 1.6, 1.1, '#3a0d10'); E(2.6, 20, 1.6, 1.1, '#3a0d10');
   // eyes under the heavy brow
   const eyeCol = p2 ? C.rose : '#f2b23a';
-  for (const s of [-1, 1]) { E(s * 9.5, -12, 3.2, 2.4, eyeCol); E(s * 9.5, -12, 1.2, 1.6, '#120c06'); }
-  // mouth: open with fangs when angry
-  if (p2) {
+  for (const s of [-1, 1]) {
+    if (dying) {
+      ctx.strokeStyle = '#f7f1e3'; ctx.lineWidth = 1.2; ctx.beginPath();
+      for (let a = 0; a < 10; a += 0.4) { const r = a * 0.4; const xx = s * 9.5 + Math.cos(a + b.deathT * 0.3) * r, yy = -12 + Math.sin(a + b.deathT * 0.3) * r; a ? ctx.lineTo(xx, yy) : ctx.moveTo(xx, yy); }
+      ctx.stroke();
+    } else if (rage > 0) {
+      E(s * 9.5, -12, 3.6, 1.6, eyeCol); E(s * 9.5, -12, 1.2, 1.2, '#120c06');
+      ctx.strokeStyle = '#120c06'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(s * 4, -16.5); ctx.lineTo(s * 14, -14); ctx.stroke();
+    } else { E(s * 9.5, -12, 3.2, 2.4, eyeCol); E(s * 9.5, -12, 1.2, 1.6, '#120c06'); }
+  }
+  // mouth: open with fangs when angry, tongue out when defeated
+  if (dying) {
+    E(0, 27, 5, 4, '#2a0a10');
+    ctx.fillStyle = '#f2a0b8'; ctx.beginPath(); ctx.ellipse(2, 31, 3, 4, 0.3, 0, Math.PI); ctx.fill();
+  } else if (p2 || rage > 0) {
     const open = 3.5 + Math.abs(Math.sin(b.t * 0.15)) * 2;
     E(0, 27, 9, open, '#2a0a10');
     ctx.fillStyle = '#f7f1e3';
@@ -1063,6 +1127,15 @@ function drawBoss(b) {
   } else {
     ctx.strokeStyle = '#2b2419'; ctx.lineWidth = 1.4;
     ctx.beginPath(); ctx.moveTo(-6, 26.5); ctx.quadraticCurveTo(0, 28.5, 6, 26.5); ctx.stroke();
+  }
+  // raised fists while raging (chest-beating fit)
+  if (rage > 0 && !dying) {
+    for (const s of [-1, 1]) {
+      const fy = -22 + Math.sin(rage * 0.9 + (s > 0 ? Math.PI : 0)) * 9;
+      ctx.strokeStyle = '#4a412b'; ctx.lineWidth = 9; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(s * 30, 12); ctx.quadraticCurveTo(s * 50, 4, s * 46, fy); ctx.stroke();
+      E(s * 46, fy - 3, 7, 6.5, '#2b2419');
+    }
   }
   ctx.filter = 'none';
   ctx.restore();
@@ -1224,7 +1297,7 @@ function draw() {
   if (partner) dropShadow(partner.x + 8, partner.y + 16, 7, 3.5);
   if (player.alive) dropShadow(player.x + 10, player.y + 22, 10, 4.5);
   for (const e of enemies) drawEnemy(e);
-  if (boss && !boss.dead) drawBoss(boss);
+  if (boss && (!boss.dead || boss.deathT > 0)) drawBoss(boss);
 
   // player shots
   ctx.fillStyle = 'rgba(11,14,42,0.75)';
@@ -1266,7 +1339,7 @@ function draw() {
     ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(b.x, b.y, b.r * 0.45, 0, TAU); ctx.fill();
   }
 
-  for (const p of popups) { ctx.globalAlpha = Math.min(1, p.t / 20); text(String(p.text), p.x, p.y, 11, p.col); }
+  for (const p of popups) { ctx.globalAlpha = Math.min(1, p.t / 20); text(String(p.text), p.x, p.y, p.size || 11, p.col); }
   ctx.globalAlpha = 1;
 
   // bomb shockwave
