@@ -360,7 +360,7 @@ function jingle() {
 }
 function updateMusic() {
   let want = null;
-  if (state === 'title') want = 'meadow';
+  if (state === 'title' || state === 'splash') want = 'meadow';
   else if (state === 'play' || state === 'pause') {
     if (banner && banner.clear) want = null;
     else if (boss && !boss.dead) want = 'boss';
@@ -379,6 +379,7 @@ addEventListener('keydown', e => {
   if (keys.has(k)) return;
   keys.add(k);
   initAudio();
+  if (state === 'splash') { leaveSplash(); return; }
   if (state === 'title' && (k === 'arrowleft' || k === 'a')) selectCat('tina');
   if (state === 'title' && (k === 'arrowright' || k === 'd')) selectCat('raina');
   if (k === 'enter' || k === ' ' || k === 'z') onStartPress();
@@ -388,6 +389,20 @@ addEventListener('keydown', e => {
 });
 addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
 addEventListener('blur', () => { keys.clear(); if (state === 'play') state = 'pause'; });
+
+// The first touch anywhere unlocks sound (browsers require one) and moves on to the title.
+function leaveSplash() {
+  if (state !== 'splash') return;
+  state = 'title';
+  catVoice('tina', 'meow', 0.15); catVoice('raina', 'meow', 0.5);
+}
+document.addEventListener('pointerdown', e => {
+  initAudio();
+  if (state === 'splash') { leaveSplash(); e.stopPropagation(); e.preventDefault(); }
+}, true);
+document.addEventListener('touchend', () => initAudio(), { passive: true });
+// If this device allows sound without a tap (e.g. the Windows app), skip the splash.
+setTimeout(() => { initAudio(); setTimeout(() => { if (ac && ac.state === 'running' && state === 'splash') state = 'title'; }, 200); }, 0);
 
 let drag = null;
 function toGame(e) {
@@ -431,7 +446,7 @@ const rand = (a, b) => a + Math.random() * (b - a);
 const TAU = Math.PI * 2;
 
 // ---------- Game state ----------
-let state = 'title'; // title | play | pause | over
+let state = 'splash'; // splash | title | play | pause | over
 let frame = 0, score = 0, stage = 1, stageT = 0, spawnT = 0, boss = null, bossWarned = false;
 let flash = 0, shake = 0, banner = null, bombFx = 0;
 let player, partner, pShots, eShots, enemies, items, parts, popups;
@@ -752,8 +767,8 @@ function update() {
       if (player.y < 160 || dist < 60) { it.x += (player.x - it.x) * 0.12; it.y += (player.y - it.y) * 0.12; }
       if (dist < 16) {
         it.dead = true; sfx.item(); catVoice(player.cat, 'trill', 0.1);
-        if (it.kind === 'P') { if (player.level < 3) { player.level++; popup(it.x, it.y, 'POWER UP', C.amber); } else { score += 2000; popup(it.x, it.y, '2000', C.amber); } }
-        else { if (player.bombs < 5) { player.bombs++; popup(it.x, it.y, 'BOMB +1', C.rose); } else { score += 2000; popup(it.x, it.y, '2000', C.rose); } }
+        if (it.kind === 'P') { if (player.level < 3) { player.level++; popup(it.x, it.y, 'ビッツでパワーアップ！', C.amber, 12); } else { score += 2000; popup(it.x, it.y, 'ビッツ ボーナス 2000', C.amber, 12); } }
+        else { if (player.bombs < 5) { player.bombs++; popup(it.x, it.y, 'サラミでボム+1！', C.rose, 12); } else { score += 2000; popup(it.x, it.y, 'サラミ ボーナス 2000', C.rose, 12); } }
       }
     }
   }
@@ -1490,13 +1505,13 @@ function bgTile(kind) { return bgTiles[kind] || (bgTiles[kind] = makeBg(kind)); 
 let bgY = 0, bgPrev = null, bgFade = 0;
 const biomeOf = st => BIOMES[(st - 1) % BIOMES.length];
 function drawBackground() {
-  const kind = state === 'title' ? 'meadow' : biomeOf(stage);
+  const kind = (state === 'title' || state === 'splash') ? 'meadow' : biomeOf(stage);
   const y = bgY;
   const blit = (k, a) => { const t = bgTile(k); ctx.globalAlpha = a; ctx.drawImage(t, 0, y - BG_H, W, BG_H); ctx.drawImage(t, 0, y, W, BG_H); ctx.globalAlpha = 1; };
   blit(kind, 1);
   if (bgPrev && bgFade > 0 && bgPrev !== kind) blit(bgPrev, bgFade / 90);
   // later laps: sunset, then night
-  const lap = state === 'title' ? 0 : Math.floor((stage - 1) / BIOMES.length);
+  const lap = (state === 'title' || state === 'splash') ? 0 : Math.floor((stage - 1) / BIOMES.length);
   if (lap === 1) { ctx.fillStyle = 'rgba(255,120,50,0.2)'; ctx.fillRect(0, 0, W, H); }
   else if (lap >= 2) { ctx.fillStyle = 'rgba(15,18,60,0.45)'; ctx.fillRect(0, 0, W, H); }
 }
@@ -1517,16 +1532,10 @@ function draw() {
   drawBackground();
 
   if (state === 'title') { ctx.fillStyle = 'rgba(11,14,42,0.5)'; ctx.fillRect(0, 0, W, H); drawTitle(); ctx.restore(); return; }
+  if (state === 'splash') { ctx.fillStyle = 'rgba(11,14,42,0.45)'; ctx.fillRect(0, 0, W, H); drawSplash(); ctx.restore(); return; }
 
   // items
-  for (const it of items) {
-    ctx.save(); ctx.translate(it.x, it.y);
-    const col = it.kind === 'P' ? C.amber : C.rose;
-    ctx.fillStyle = C.night; ctx.strokeStyle = col; ctx.lineWidth = 2;
-    ctx.fillRect(-8, -8, 16, 16); ctx.strokeRect(-8, -8, 16, 16);
-    text(it.kind, 0, 1, 12, col);
-    ctx.restore();
-  }
+  for (const it of items) drawItem(it.kind, it.x, it.y + Math.sin(it.t * 0.15) * 1.5, it.t, 1);
 
   for (const e of enemies) dropShadow(e.x + 8, e.y + 14, e.r * 0.8, e.r * 0.45);
   if (boss && !boss.dead) dropShadow(boss.x + 18, boss.y + 46, 44, 14);
@@ -1604,11 +1613,9 @@ function drawHUD() {
   text(hiScore.toLocaleString(), W / 2 - 10, 21, 13, C.amber, 'left');
   // lives as tiny cats
   for (let i = 0; i < Math.max(0, player.lives); i++) drawCat(W - 14 - i * 14, 13, 0, player.cat, 0.42);
-  for (let i = 0; i < player.bombs; i++) {
-    ctx.fillStyle = C.rose; ctx.beginPath(); ctx.arc(W - 14 - i * 12, 23, 3.5, 0, TAU); ctx.fill();
-  }
+  for (let i = 0; i < player.bombs; i++) drawItem('B', W - 14 - i * 12, 24, 0, 0.45);
   // power
-  text(`PWR ${'■'.repeat(player.level)}${'□'.repeat(3 - player.level)}`, 10, H - 12, 10, C.dim, 'left');
+  text(`パワー ${'■'.repeat(player.level)}${'□'.repeat(3 - player.level)}`, 10, H - 12, 10, C.dim, 'left');
   text(`STAGE ${stage}`, W - 10, H - 12, 10, C.dim, 'right');
   // boss HP
   if (boss && !boss.dead && !boss.enter) {
@@ -1652,6 +1659,38 @@ function drawGameOver() {
   if (newHi && Math.floor(frame / 15) % 2) text('★ ハイスコア更新！ ★', W / 2, H / 2 + 62, 14, C.amber);
   if (overT > 40) text('タップ / Enter でタイトルへ', W / 2, H / 2 + 110, 13, C.paper);
 }
+// ビッツ = cat-treat bits (power up), サラミ = a salami slice (extra bomb)
+function drawItem(kind, x, y, t, s) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  if (s >= 1) { ctx.globalAlpha = 0.35 + Math.sin(t * 0.2) * 0.15; ctx.fillStyle = kind === 'P' ? C.amber : C.rose; ctx.beginPath(); ctx.arc(0, 0, 13, 0, TAU); ctx.fill(); ctx.globalAlpha = 1; }
+  if (kind === 'P') {
+    E(0, 0, 10, 10, '#fff4dc'); ctx.strokeStyle = '#c98a2e'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(0, 0, 10, 0, TAU); ctx.stroke();
+    for (const [fx, fy, r] of [[-3.5, -3, 0.5], [3.5, -1.5, -0.4], [-0.5, 4, 0.2]]) {
+      ctx.save(); ctx.translate(fx, fy); ctx.rotate(r);
+      E(0, 0, 3.4, 2, '#a8662e');
+      ctx.fillStyle = '#a8662e'; ctx.beginPath(); ctx.moveTo(2.6, 0); ctx.lineTo(5, -1.8); ctx.lineTo(5, 1.8); ctx.closePath(); ctx.fill();
+      E(-1.6, -0.4, 0.5, 0.5, '#3a220e');
+      ctx.restore();
+    }
+  } else {
+    E(0, 0, 9.5, 9.5, '#8a1f2a'); E(0, 0, 8.2, 8.2, '#c0394a');
+    for (const [fx, fy, r] of [[-3.5, -3, 1.4], [3, -4, 1.1], [1, 1, 1.5], [-4, 3, 1.1], [4.5, 3.5, 1.2], [-0.5, 5.5, 0.9]]) E(fx, fy, r, r, '#f6e3d8');
+    E(-3, -5, 2.5, 1.2, 'rgba(255,255,255,0.35)');
+  }
+  ctx.restore();
+}
+function drawSplash() {
+  text("TINA & RAINA'S GREAT ADVENTURE", W / 2, 120, 10, C.paper);
+  text('ティナとライナの', W / 2, 160, 24, C.paper);
+  text('大冒険', W / 2 + 3, 222, 62, C.rose);
+  text('大冒険', W / 2, 219, 62, C.amber);
+  const hop = k => Math.abs(Math.sin(frame / 14 + k)) * -10;
+  drawCat(W / 2 - 46, 350 + hop(0), frame, 'tina', 2.2, isBlink(frame));
+  drawCat(W / 2 + 46, 350 + hop(1.2), frame + 40, 'raina', 2.2, isBlink(frame + 100));
+  if (Math.floor(frame / 30) % 2 === 0) text('タップしてはじめる', W / 2, 470, 18, C.paper);
+  text('（キーボードなら どれかのキー）', W / 2, 496, 11, C.dim);
+  text('♪ 音が出ます', W / 2, 540, 11, C.dim);
+}
 function drawTitle() {
   text("TINA & RAINA'S GREAT ADVENTURE", W / 2, 62, 10, C.paper);
   text('ティナとライナの', W / 2, 100, 24, C.paper);
@@ -1682,12 +1721,12 @@ function drawTitle() {
   // legend
   const ly = H - 92;
   ctx.fillStyle = C.line; ctx.fillRect(40, ly - 16, W - 80, 1);
-  const items2 = [['P', C.amber, 'パワーアップ（最大3段階）'], ['B', C.rose, 'ボム追加（画面の弾を消す）']];
-  items2.forEach(([k, col, desc], i) => {
+  const items2 = [['P', 'ビッツ', 'パワーアップ（最大3段階）', C.amber], ['B', 'サラミ', 'ボム+1（画面の弾を消す）', C.rose]];
+  items2.forEach(([k, name, desc, col], i) => {
     const y = ly + i * 26;
-    ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.strokeRect(60, y - 8, 16, 16);
-    text(k, 68, y + 1, 12, col);
-    text(desc, 88, y + 1, 12, C.paper, 'left');
+    drawItem(k, 56, y + 1, frame, 0.9);
+    text(name, 74, y + 1, 12, col, 'left');
+    text(desc, 120, y + 1, 11, C.paper, 'left');
   });
   text('自動連射。敵弾は中心の小さな当たり判定だけ注意！', W / 2, H - 28, 10, C.dim);
 }
