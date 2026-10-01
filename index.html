@@ -71,6 +71,10 @@ canvas {
   width: 58px; height: 58px; cursor: pointer;
 }
 .pad button.bomb { border-color: var(--rose); color: var(--rose); }
+.pad button.sp { border-color: var(--line); color: var(--dim); font-size: 13px; }
+.pad button.sp.ready { border-color: var(--amber); color: var(--night); background: var(--amber); animation: spglow 0.6s ease-in-out infinite alternate; }
+@keyframes spglow { from { box-shadow: 0 0 0 0 rgba(255,181,71,0.7); } to { box-shadow: 0 0 0 8px rgba(255,181,71,0); } }
+@media (prefers-reduced-motion: reduce) { .pad button.sp.ready { animation: none; } }
 .pad button:focus-visible, .hint button:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
 .mute {
   font-family: var(--pixel); font-size: 12px; color: var(--paper); cursor: pointer;
@@ -92,6 +96,7 @@ canvas {
   <div class="stage" id="stage">
     <canvas id="cv" width="360" height="640" aria-label="シューティングゲーム画面"></canvas>
     <div class="pad" id="pad">
+      <button class="sp" id="spBtn" aria-label="必殺技">必殺</button>
       <button class="bomb" id="bombBtn" aria-label="ボム">ボム</button>
       <button id="pauseBtn" aria-label="一時停止">II</button>
     </div>
@@ -100,6 +105,7 @@ canvas {
     <span class="keys"><kbd>←↑↓→</kbd>/<kbd>WASD</kbd> 移動</span>
     <span class="keys"><kbd>Shift</kbd> 低速</span>
     <span class="keys"><kbd>X</kbd> ボム</span>
+    <span class="keys"><kbd>C</kbd> 必殺</span>
     <span class="keys"><kbd>P</kbd> ポーズ</span>
     <span class="touch">スマホ：ドラッグで移動・自動連射</span>
     <button class="mute" id="muteBtn">音 ON</button>
@@ -384,6 +390,7 @@ addEventListener('keydown', e => {
   if (state === 'title' && (k === 'arrowright' || k === 'd')) selectCat('raina');
   if (k === 'enter' || k === ' ' || k === 'z') onStartPress();
   if (k === 'x') useBomb();
+  if (k === 'c') useSpecial();
   if (k === 'p' || k === 'escape') togglePause();
   if (k === 'm') muteBtn.click();
 });
@@ -438,6 +445,8 @@ const endDrag = e => { if (drag && drag.id === e.pointerId) drag = null; };
 cv.addEventListener('pointerup', endDrag);
 cv.addEventListener('pointercancel', endDrag);
 document.getElementById('bombBtn').addEventListener('pointerdown', e => { e.preventDefault(); initAudio(); useBomb(); });
+const spBtn = document.getElementById('spBtn');
+spBtn.addEventListener('pointerdown', e => { e.preventDefault(); initAudio(); useSpecial(); });
 document.getElementById('pauseBtn').addEventListener('pointerdown', e => { e.preventDefault(); togglePause(); });
 
 // ---------- Helpers ----------
@@ -452,14 +461,90 @@ let flash = 0, shake = 0, banner = null, bombFx = 0;
 let player, partner, pShots, eShots, enemies, items, parts, popups;
 
 
+// ---------- 必殺技: にくきゅうスタンプ ----------
+// Gauge fills by defeating enemies and hitting bosses; at 100 the two cats drop a giant paw.
+const IS_TOUCH = (() => { try { return matchMedia('(pointer: coarse)').matches; } catch (e) { return false; } })();
+const SP_MAX = 100, SP_LEN = 120, SP_HIT = 72;
+let special = null;
+function addSp(v) {
+  if (!player || player.sp >= SP_MAX) return;
+  player.sp = Math.min(SP_MAX, player.sp + v);
+  if (player.sp >= SP_MAX) { popup(player.x, player.y - 30, '必殺技OK！', C.amber, 14, 70); tone(880, 0.1, 'triangle', 0.06); tone(1320, 0.18, 'triangle', 0.06, 0, 0.1); }
+}
+function useSpecial() {
+  if (state !== 'play' || special || !player.alive || player.sp < SP_MAX || (banner && banner.clear)) return;
+  player.sp = 0;
+  const tx = boss && !boss.dead ? boss.x : W / 2, ty = boss && !boss.dead ? boss.y : H * 0.32;
+  special = { t: 0, tx, ty };
+  player.inv = Math.max(player.inv, SP_LEN + 60);
+  catVoice(player.cat, 'meow'); catVoice(partner.cat, 'meow', 0.25);
+  tone(523, 0.12, 'square', 0.05); tone(659, 0.12, 'square', 0.05, 0, 0.12); tone(784, 0.12, 'square', 0.05, 0, 0.24); tone(1047, 0.3, 'square', 0.06, 0, 0.36);
+}
+function updateSpecial() {
+  const sp = special; sp.t++;
+  if (sp.t < SP_HIT && sp.t % 3 === 0) eShots.length = 0;     // time stops: bullets vanish
+  if (sp.t === SP_HIT) {
+    shake = 30; flash = 26; sfx.big(); noise(0.5, 0.2);
+    popup(sp.tx, sp.ty + 70, 'ドーーン！！', C.amber, 26, 80, 0.3);
+    eShots.length = 0;
+    for (const e of enemies) damageEnemy(e, 999);
+    if (boss && !boss.dead) { damageBoss(Math.ceil(boss.max * 0.5)); if (!boss.dead) boss.rage = 60; }
+    for (let i = 0; i < 4; i++) burst(sp.tx + rand(-50, 50), sp.ty + rand(-30, 40), 24, i % 2 ? C.amber : '#ffb3c7', 5);
+  }
+  if (sp.t >= SP_LEN) special = null;
+}
+function drawPaw(x, y, sc, fur, pad, alpha = 1) {
+  ctx.save(); ctx.globalAlpha = alpha; ctx.translate(x, y); ctx.scale(sc, sc);
+  E(3, 4, 26, 24, 'rgba(15,25,10,0.25)');
+  E(0, 0, 25, 23, fur);
+  E(0, 6, 11, 9, pad);                                         // main pad
+  for (const [bx, by] of [[-15, -8], [-5.5, -15], [5.5, -15], [15, -8]]) E(bx, by, 4.6, 5.4, pad);
+  E(-4, 2, 4, 2, 'rgba(255,255,255,0.35)');
+  ctx.restore();
+}
+function drawSpecial() {
+  const sp = special, t = sp.t;
+  const k = CATS[player.cat];
+  // dim the world
+  ctx.fillStyle = `rgba(11,14,42,${Math.min(0.45, t / 20)})`; ctx.fillRect(0, 0, W, H);
+  // cut-in band with both cats
+  if (t < 60) {
+    const inA = Math.min(1, t / 10), out = t > 48 ? (t - 48) / 12 : 0;
+    const bandY = H * 0.62;
+    ctx.save(); ctx.globalAlpha = inA * (1 - out);
+    ctx.fillStyle = 'rgba(11,14,42,0.9)'; ctx.beginPath(); ctx.moveTo(0, bandY - 52); ctx.lineTo(W, bandY - 70); ctx.lineTo(W, bandY + 52); ctx.lineTo(0, bandY + 70); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = C.amber; ctx.fillRect(0, bandY - 58 - 4, W, 3); ctx.fillRect(0, bandY + 60, W, 3);
+    const slide = (1 - Math.min(1, t / 14)) * 160;
+    drawCat(80 - slide, bandY + 10, frame, player.cat, 2.6, false);
+    drawCat(W - 80 + slide, bandY + 14, frame + 40, partner.cat, 2.4, false);
+    text('ひっさつ！', W / 2, bandY - 26, 16, C.paper);
+    text('にくきゅう', W / 2, bandY + 2, 26, C.amber);
+    text('スタンプ！！', W / 2, bandY + 34, 26, C.amber);
+    ctx.restore();
+  }
+  // the giant paw falls from the sky and stamps the target
+  if (t >= 40) {
+    const fall = Math.min(1, (t - 40) / (SP_HIT - 40));
+    const y = -120 + (sp.ty + 120) * (fall * fall);
+    const sc = 1.6 + (1 - fall) * 1.4;
+    const alpha = t > SP_HIT + 25 ? Math.max(0, 1 - (t - SP_HIT - 25) / 23) : 1;
+    drawPaw(sp.tx, y, sc, k.paw === '#f7f3ec' ? '#f7f3ec' : (k.body || k.fur), '#f2a0b8', alpha);
+    if (t >= SP_HIT && t < SP_HIT + 14) {
+      ctx.strokeStyle = `rgba(255,236,190,${1 - (t - SP_HIT) / 14})`; ctx.lineWidth = 6;
+      ctx.beginPath(); ctx.arc(sp.tx, sp.ty, 40 + (t - SP_HIT) * 9, 0, TAU); ctx.stroke();
+    }
+  }
+}
+
 function resetGame() {
   score = 0; stage = 1;
-  player = { x: W / 2, y: H - 90, lives: 3, bombs: 2, level: 1, cool: 0, inv: 120, alive: true, respawn: 0, cat: selCat, streak: 0, matatabi: 0 };
+  player = { x: W / 2, y: H - 90, lives: 3, bombs: 2, level: 1, cool: 0, inv: 120, alive: true, respawn: 0, cat: selCat, streak: 0, matatabi: 0, sp: 0 };
   partner = { x: W / 2 - 26, y: H - 70, cat: partnerOf(selCat), cool: 0, punch: 0, punchCD: 0, side: 1 };
   player.punch = 0; player.punchCD = 0; player.side = 1;
   startStage();
 }
 function startStage() {
+  special = null;
   bgPrev = stage > 1 ? biomeOf(stage - 1) : null; bgFade = stage > 1 ? 90 : 0;
   stageT = 0; spawnT = 60; boss = null; bossWarned = false;
   pShots = []; eShots = []; enemies = []; items = []; parts = []; popups = [];
@@ -604,6 +689,7 @@ function damageEnemy(e, dmg) {
   e.hp -= dmg; e.hitT = 4;
   if (e.hp <= 0) {
     e.dead = true;
+    if (!special) addSp(e.type === 'turret' ? 8 : 2.5);
     score += e.score; popup(e.x, e.y, e.score);
     killVoice(e.type === 'turret');
     if (player.alive && ++player.streak >= MATATABI_STREAK) { player.streak = 0; dropMatatabi(e.x, e.y, 'ノーミス30匹！'); }
@@ -670,6 +756,7 @@ function update() {
   frame++;
   bgY = (bgY + 1.1) % BG_H; if (bgFade > 0) bgFade--;
   if (state !== 'play') { if (state === 'over') overT++; updateFx(); return; }
+  if (special) { updateSpecial(); for (const e of enemies) if (e.hitT) e.hitT--; if (boss && boss.hitT) boss.hitT--; if (boss && boss.dead && boss.deathT > 0) boss.deathT--; if (player.inv > 0) player.inv--; updateFx(); return; }
   stageT++;
   if (banner) { banner.t--; if (banner.t <= 0) { const wasClear = banner.clear; banner = null; if (wasClear) { stage++; startStage(); } } }
 
@@ -761,7 +848,7 @@ function update() {
       if (!e.dead && Math.abs(s.x - e.x) < e.r && Math.abs(s.y - e.y) < e.r) { s.dead = true; damageEnemy(e, 1); if (!e.dead) sfx.hit(); break; }
     }
     if (!s.dead && boss && !boss.dead && !boss.enter && Math.abs(s.x - boss.x) < boss.r + 4 && Math.abs(s.y - boss.y) < boss.r) {
-      s.dead = true; damageBoss(1); score += 10; if (frame % 4 === 0) sfx.bossHit();
+      s.dead = true; damageBoss(1); score += 10; addSp(0.05); if (frame % 4 === 0) sfx.bossHit();
       if (Math.random() < 0.3) burst(s.x, s.y, 1, C.paper, 1.5);
     }
   }
@@ -1622,6 +1709,7 @@ function draw() {
 
   if (flash) { ctx.fillStyle = `rgba(243,234,216,${flash / 40})`; ctx.fillRect(0, 0, W, H); }
 
+  if (special) drawSpecial();
   drawHUD();
   if (banner) drawBanner();
   if (state === 'pause') drawOverlay('PAUSE', 'タップ / P で再開');
@@ -1639,6 +1727,12 @@ function drawHUD() {
   for (let i = 0; i < Math.max(0, player.lives); i++) drawCat(W - 14 - i * 14, 13, 0, player.cat, 0.42);
   for (let i = 0; i < player.bombs; i++) drawItem('B', W - 14 - i * 12, 24, 0, 0.45);
   // power
+  // 必殺 gauge
+  { const gx = 38, gy = H - 34, gw = 96, f = Math.min(1, (player.sp || 0) / SP_MAX), full = f >= 1;
+    text('必殺', 10, gy + 4, 10, full ? C.amber : C.dim, 'left');
+    ctx.fillStyle = 'rgba(11,14,42,0.75)'; ctx.fillRect(gx, gy, gw, 8);
+    ctx.fillStyle = full ? (Math.floor(frame / 8) % 2 ? C.amber : '#fff1c9') : '#e9a23a'; ctx.fillRect(gx + 1, gy + 1, (gw - 2) * f, 6);
+    if (full && !special) text(IS_TOUCH ? '必殺ボタンを押して！' : 'C キーで必殺！', gx + gw + 6, gy + 4, 10, C.amber, 'left'); }
   // マタタビ gauge: fills with each kill, empties on a miss
   { const gx = W / 2 - 46, gy = H - 16, gw = 70, f = Math.min(1, (player.streak || 0) / MATATABI_STREAK);
     drawItem('M', gx - 10, gy + 4, 0, 0.55);
@@ -1786,6 +1880,8 @@ function loop(now) {
   draw();
   const showPad = state === 'play' || state === 'pause';
   if (pad.style.visibility !== (showPad ? 'visible' : 'hidden')) pad.style.visibility = showPad ? 'visible' : 'hidden';
+  const spReady = !!(player && player.sp >= SP_MAX && !special);
+  if (spBtn.classList.contains('ready') !== spReady) spBtn.classList.toggle('ready', spReady);
   requestAnimationFrame(loop);
 }
 player = { x: W / 2, y: H - 90, lives: 3, bombs: 2, level: 1, alive: true, inv: 0, cat: selCat };
