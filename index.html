@@ -71,7 +71,7 @@ canvas {
   width: 58px; height: 58px; cursor: pointer;
 }
 .pad button.bomb { border-color: var(--rose); color: var(--rose); }
-.pad button.sp { border-color: var(--line); color: var(--dim); font-size: 13px; }
+.pad button.sp { border-color: var(--line); color: var(--dim); font-size: 24px; }
 .pad button.sp.ready { border-color: var(--amber); color: var(--night); background: var(--amber); animation: spglow 0.6s ease-in-out infinite alternate; }
 @keyframes spglow { from { box-shadow: 0 0 0 0 rgba(255,181,71,0.7); } to { box-shadow: 0 0 0 8px rgba(255,181,71,0); } }
 @media (prefers-reduced-motion: reduce) { .pad button.sp.ready { animation: none; } }
@@ -96,7 +96,7 @@ canvas {
   <div class="stage" id="stage">
     <canvas id="cv" width="360" height="640" aria-label="シューティングゲーム画面"></canvas>
     <div class="pad" id="pad">
-      <button class="sp" id="spBtn" aria-label="必殺技">必殺</button>
+      <button class="sp" id="spBtn" aria-label="必殺技 にくきゅうスタンプ">肉</button>
       <button class="bomb" id="bombBtn" aria-label="ボム">ボム</button>
       <button id="pauseBtn" aria-label="一時停止">II</button>
     </div>
@@ -105,7 +105,7 @@ canvas {
     <span class="keys"><kbd>←↑↓→</kbd>/<kbd>WASD</kbd> 移動</span>
     <span class="keys"><kbd>Shift</kbd> 低速</span>
     <span class="keys"><kbd>X</kbd> ボム</span>
-    <span class="keys"><kbd>C</kbd> 必殺</span>
+    <span class="keys"><kbd>C</kbd> 必殺（肉）</span>
     <span class="keys"><kbd>P</kbd> ポーズ</span>
     <span class="touch">スマホ：ドラッグで移動・自動連射</span>
     <button class="mute" id="muteBtn">音 ON</button>
@@ -1732,7 +1732,7 @@ function drawHUD() {
     text('必殺', 10, gy + 4, 10, full ? C.amber : C.dim, 'left');
     ctx.fillStyle = 'rgba(11,14,42,0.75)'; ctx.fillRect(gx, gy, gw, 8);
     ctx.fillStyle = full ? (Math.floor(frame / 8) % 2 ? C.amber : '#fff1c9') : '#e9a23a'; ctx.fillRect(gx + 1, gy + 1, (gw - 2) * f, 6);
-    if (full && !special) text(IS_TOUCH ? '必殺ボタンを押して！' : 'C キーで必殺！', gx + gw + 6, gy + 4, 10, C.amber, 'left'); }
+    if (full && !special) text(IS_TOUCH ? '「肉」ボタンで必殺！' : 'C キーで必殺！', gx + gw + 6, gy + 4, 10, C.amber, 'left'); }
   // マタタビ gauge: fills with each kill, empties on a miss
   { const gx = W / 2 - 46, gy = H - 16, gw = 70, f = Math.min(1, (player.streak || 0) / MATATABI_STREAK);
     drawItem('M', gx - 10, gy + 4, 0, 0.55);
