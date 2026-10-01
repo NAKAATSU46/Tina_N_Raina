@@ -454,7 +454,7 @@ let player, partner, pShots, eShots, enemies, items, parts, popups;
 
 function resetGame() {
   score = 0; stage = 1;
-  player = { x: W / 2, y: H - 90, lives: 3, bombs: 2, level: 1, cool: 0, inv: 120, alive: true, respawn: 0, cat: selCat };
+  player = { x: W / 2, y: H - 90, lives: 3, bombs: 2, level: 1, cool: 0, inv: 120, alive: true, respawn: 0, cat: selCat, streak: 0, matatabi: 0 };
   partner = { x: W / 2 - 26, y: H - 70, cat: partnerOf(selCat), cool: 0, punch: 0, punchCD: 0, side: 1 };
   player.punch = 0; player.punchCD = 0; player.side = 1;
   startStage();
@@ -606,6 +606,7 @@ function damageEnemy(e, dmg) {
     e.dead = true;
     score += e.score; popup(e.x, e.y, e.score);
     killVoice(e.type === 'turret');
+    if (player.alive && ++player.streak >= MATATABI_STREAK) { player.streak = 0; dropMatatabi(e.x, e.y, 'ノーミス30匹！'); }
     burst(e.x, e.y, e.type === 'turret' ? 26 : 12, e.type === 'turret' ? C.amber : C.mint, e.type === 'turret' ? 4 : 3);
     sfx.boom();
     if (e.type === 'turret') { shake = Math.max(shake, 6); items.push(mkItem(Math.random() < 0.75 ? 'P' : 'B', e.x, e.y)); }
@@ -635,13 +636,23 @@ function damageBoss(dmg) {
     for (let i = 0; i < 6; i++) setTimeout(() => { burst(boss.x + rand(-40, 40), boss.y + rand(-30, 30), 30, i % 2 ? C.amber : C.rose, 5); sfx.boom(); }, i * 140);
     banner = { text: 'STAGE CLEAR', sub: `ボーナス ${bonus.toLocaleString()}`, t: 220, clear: true };
     items.push(mkItem('P', boss.x - 20, boss.y), mkItem('B', boss.x + 20, boss.y));
+    if (boss.noMiss !== false) dropMatatabi(boss.x, boss.y + 10, 'ノーミス撃破！');
   }
+}
+// マタタビ: earned by good play (30 kills in a row without a miss, or a no-miss boss win)
+const MATATABI_STREAK = 30, MAX_LIVES = 5;
+function dropMatatabi(x, y, why) {
+  items.push(mkItem('M', x, y));
+  popup(x, y - 18, why, C.mint, 13, 70);
+  tone(988, 0.08, 'triangle', 0.05, 0, 0); tone(1319, 0.12, 'triangle', 0.05, 0, 0.08);
 }
 function mkItem(kind, x, y) { return { kind, x, y, vy: -2.5, t: 0 }; }
 
 function hitPlayer() {
   if (player.inv > 0 || !player.alive) return;
   player.alive = false; player.respawn = 70;
+  player.streak = 0;
+  if (boss && !boss.dead) boss.noMiss = false;
   if (boss && !boss.dead && !boss.enter) { bossVoice('laugh', 0.35); bossSay(BOSS_DEFS[boss.kind].laugh, C.amber, 16, 70); boss.rage = 30; }
   burst(player.x, player.y, 40, C.amber, 5); burst(player.x, player.y, 20, C.paper, 3);
   shake = 20; flash = 10; noise(0.4, 0.1); catVoice(player.cat, 'hurt');
@@ -678,6 +689,11 @@ function update() {
     const firing = !(banner && banner.clear);
     if (player.cool-- <= 0 && firing) { playerFire(); player.cool = CATS[player.cat].rate; }
     if (player.inv > 0) player.inv--;
+    if (player.matatabi > 0) {
+      player.matatabi--;
+      if (player.matatabi % 9 === 0) popup(player.x + rand(-14, 14), player.y - 18, '♥', C.rose, rand(10, 15), 40, 0.9);
+      if (player.matatabi % 13 === 0) popup(partner.x + rand(-10, 10), partner.y - 14, '♥', '#ffb3c7', 10, 36, 0.9);
+    }
     // partner cat follows on the left, a little behind
     const tx = player.x - 26 * (player.x > 40 ? 1 : -1), ty = player.y + 18;
     partner.x += (tx - partner.x) * 0.12; partner.y += (ty - partner.y) * 0.12;
@@ -768,7 +784,12 @@ function update() {
       if (dist < 16) {
         it.dead = true; sfx.item(); catVoice(player.cat, 'trill', 0.1);
         if (it.kind === 'P') { if (player.level < 3) { player.level++; popup(it.x, it.y, 'ビッツでパワーアップ！', C.amber, 12); } else { score += 2000; popup(it.x, it.y, 'ビッツ ボーナス 2000', C.amber, 12); } }
-        else { if (player.bombs < 5) { player.bombs++; popup(it.x, it.y, 'サラミでボム+1！', C.rose, 12); } else { score += 2000; popup(it.x, it.y, 'サラミ ボーナス 2000', C.rose, 12); } }
+        else if (it.kind === 'B') { if (player.bombs < 5) { player.bombs++; popup(it.x, it.y, 'サラミでボム+1！', C.rose, 12); } else { score += 2000; popup(it.x, it.y, 'サラミ ボーナス 2000', C.rose, 12); } }
+        else {
+          if (player.lives < MAX_LIVES) { player.lives++; popup(it.x, it.y - 6, 'マタタビでいのち+1！', C.mint, 14, 80); } else { score += 5000; popup(it.x, it.y - 6, 'マタタビ ボーナス 5000', C.mint, 13, 70); }
+          player.matatabi = 200; player.inv = Math.max(player.inv, 200);
+          catVoice(player.cat, 'meow', 0.15); catVoice(partner.cat, 'trill', 0.5); catVoice(player.cat, 'trill', 0.9);
+        }
       }
     }
   }
@@ -1563,7 +1584,10 @@ function draw() {
     ctx.beginPath(); ctx.arc(c.x, c.y - 4 * sc, 38 * sc, a0 + c.side * 0.9, a0 - c.side * 0.3, c.side > 0); ctx.stroke();
   };
   if (partner) { drawCat(partner.x, partner.y, frame + 40, partner.cat, 0.72, isBlink(frame + 90), partner.punch, partner.side); swipe(partner, 0.75); }
-  if (player.alive && !(player.inv > 0 && Math.floor(frame / 4) % 2)) {
+  if (player.alive && player.matatabi > 0) {
+    ctx.save(); ctx.translate(player.x, player.y); ctx.rotate(Math.sin(frame * 0.25) * 0.25);
+    drawCat(0, 0, frame * 2, player.cat, 1, true, player.punch, player.side); ctx.restore();
+  } else if (player.alive && !(player.inv > 0 && Math.floor(frame / 4) % 2)) {
     drawCat(player.x, player.y, frame, player.cat, 1, isBlink(frame), player.punch, player.side);
   }
   if (player.alive) swipe(player, 1);
@@ -1615,6 +1639,12 @@ function drawHUD() {
   for (let i = 0; i < Math.max(0, player.lives); i++) drawCat(W - 14 - i * 14, 13, 0, player.cat, 0.42);
   for (let i = 0; i < player.bombs; i++) drawItem('B', W - 14 - i * 12, 24, 0, 0.45);
   // power
+  // マタタビ gauge: fills with each kill, empties on a miss
+  { const gx = W / 2 - 46, gy = H - 16, gw = 70, f = Math.min(1, (player.streak || 0) / MATATABI_STREAK);
+    drawItem('M', gx - 10, gy + 4, 0, 0.55);
+    ctx.fillStyle = 'rgba(11,14,42,0.75)'; ctx.fillRect(gx, gy, gw, 7);
+    ctx.fillStyle = C.mint; ctx.fillRect(gx + 1, gy + 1, (gw - 2) * f, 5);
+    text(`${player.streak || 0}/${MATATABI_STREAK}`, gx + gw + 6, gy + 4, 9, C.dim, 'left'); }
   text(`パワー ${'■'.repeat(player.level)}${'□'.repeat(3 - player.level)}`, 10, H - 12, 10, C.dim, 'left');
   text(`STAGE ${stage}`, W - 10, H - 12, 10, C.dim, 'right');
   // boss HP
@@ -1662,7 +1692,7 @@ function drawGameOver() {
 // ビッツ = cat-treat bits (power up), サラミ = a salami slice (extra bomb)
 function drawItem(kind, x, y, t, s) {
   ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
-  if (s >= 1) { ctx.globalAlpha = 0.35 + Math.sin(t * 0.2) * 0.15; ctx.fillStyle = kind === 'P' ? C.amber : C.rose; ctx.beginPath(); ctx.arc(0, 0, 13, 0, TAU); ctx.fill(); ctx.globalAlpha = 1; }
+  if (s >= 1) { ctx.globalAlpha = 0.35 + Math.sin(t * 0.2) * 0.15; ctx.fillStyle = kind === 'P' ? C.amber : kind === 'M' ? C.mint : C.rose; ctx.beginPath(); ctx.arc(0, 0, kind === 'M' ? 14 + Math.sin(t * 0.3) * 1.5 : 13, 0, TAU); ctx.fill(); ctx.globalAlpha = 1; }
   if (kind === 'P') {
     // three crunchy fish-shaped treats, outlined so they read on any background
     for (const [fx, fy, r] of [[-4.5, -4, 0.35], [4.5, -2.5, -0.45], [0, 5, 0.1]]) {
@@ -1674,6 +1704,19 @@ function drawItem(kind, x, y, t, s) {
       E(-3.2, -0.3, 0.75, 0.75, '#2a1608');
       ctx.restore();
     }
+  } else if (kind === 'M') {
+    // a sprig of silvervine: twig, two leaves and a little fruit
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = '#3a2614'; ctx.lineWidth = 4.2; ctx.beginPath(); ctx.moveTo(-7, 8); ctx.lineTo(7, -7); ctx.stroke();
+    ctx.strokeStyle = '#9a6b3e'; ctx.lineWidth = 2.6; ctx.beginPath(); ctx.moveTo(-7, 8); ctx.lineTo(7, -7); ctx.stroke();
+    for (const [lx, ly2, rot] of [[-4.5, -2.5, -0.9], [4, 3.5, 0.6]]) {
+      ctx.save(); ctx.translate(lx, ly2); ctx.rotate(rot);
+      E(0, 0, 5.8, 3.4, '#1e4a26'); E(0, 0, 4.9, 2.6, '#4fb05a');
+      ctx.strokeStyle = '#2e7a3a'; ctx.lineWidth = 0.7; ctx.beginPath(); ctx.moveTo(-4.4, 0); ctx.lineTo(4.4, 0); ctx.stroke();
+      ctx.restore();
+    }
+    E(5.5, -6.5, 3, 3.6, '#3a2614'); E(5.5, -6.5, 2.2, 2.8, '#e3b04a'); E(4.8, -7.5, 0.8, 0.8, '#fff6d8');
+    if (s >= 1) { ctx.fillStyle = '#fff'; for (const a of [0, 2.1, 4.2]) { const r = 12, aa = a + t * 0.08; ctx.fillRect(Math.cos(aa) * r - 1, Math.sin(aa) * r - 1, 2, 2); } }
   } else {
     E(0, 0, 9.5, 9.5, '#8a1f2a'); E(0, 0, 8.2, 8.2, '#c0394a');
     for (const [fx, fy, r] of [[-3.5, -3, 1.4], [3, -4, 1.1], [1, 1, 1.5], [-4, 3, 1.1], [4.5, 3.5, 1.2], [-0.5, 5.5, 0.9]]) E(fx, fy, r, r, '#f6e3d8');
@@ -1721,14 +1764,14 @@ function drawTitle() {
   if (Math.floor(frame / 30) % 2 === 0) text('タップ / Enter でスタート', W / 2, CARD_Y + CARD_H + 48, 15, C.paper);
   text(`HI SCORE  ${hiScore.toLocaleString()}`, W / 2, CARD_Y + CARD_H + 76, 12, C.amber);
   // legend
-  const ly = H - 92;
-  ctx.fillStyle = C.line; ctx.fillRect(40, ly - 16, W - 80, 1);
-  const items2 = [['P', 'ビッツ', 'パワーアップ（最大3段階）', C.amber], ['B', 'サラミ', 'ボム+1（画面の弾を消す）', C.rose]];
+  const ly = H - 104;
+  ctx.fillStyle = C.line; ctx.fillRect(40, ly - 14, W - 80, 1);
+  const items2 = [['P', 'ビッツ', 'パワーアップ（最大3段階）', C.amber], ['B', 'サラミ', 'ボム+1（画面の弾を消す）', C.rose], ['M', 'マタタビ', 'いのち+1（ノーミスで出る）', C.mint]];
   items2.forEach(([k, name, desc, col], i) => {
-    const y = ly + i * 26;
+    const y = ly + i * 23;
     drawItem(k, 56, y + 1, frame, 0.9);
     text(name, 74, y + 1, 12, col, 'left');
-    text(desc, 120, y + 1, 11, C.paper, 'left');
+    text(desc, 128, y + 1, 11, C.paper, 'left');
   });
   text('自動連射。敵弾は中心の小さな当たり判定だけ注意！', W / 2, H - 28, 10, C.dim);
 }
