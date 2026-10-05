@@ -788,9 +788,25 @@ function tryPunch(c, sc) {
   if (boss && !boss.dead && !boss.enter && Math.hypot(boss.x - c.x, boss.y - c.y) < reach + boss.r + 6) { damageBoss(Math.round(10 * sc)); hit++; }
   if (hit && Math.random() < 0.35) { popup(c.x + c.side * 18, c.y - 26, 'ニャッ！', C.amber); if (voiceCD <= 0) { catVoice(c.cat, 'happy'); voiceCD = 50; } }
 }
+// Support fire from the partner cat, different for each:
+//  Tina (partner) -> homing "green eye" orbs that chase the nearest enemy
+//  Raina (partner) -> a fan of little paw-print shots
 function partnerFire() {
-  const col = CATS[partner.cat].shot;
-  pShots.push({ x: partner.x, y: partner.y - 10, vx: 0, vy: -11, col, small: true });
+  const L = player.level, col = CATS[partner.cat].shot;
+  if (partner.cat === 'tina') {
+    const n = L >= 3 ? 2 : 1;
+    for (let i = 0; i < n; i++) pShots.push({ x: partner.x + (i ? 6 : -6) * (n - 1), y: partner.y - 10, vx: (i ? 1.5 : -1.5) * (n - 1), vy: -7, col, homing: true, dmg: 2, life: 120 });
+    return 26 - L * 3;
+  }
+  const spread = L >= 3 ? [-2.4, -1.2, 0, 1.2, 2.4] : L >= 2 ? [-1.8, 0, 1.8] : [-1, 1];
+  for (const v of spread) pShots.push({ x: partner.x, y: partner.y - 10, vx: v, vy: -9.5, col, paw: true, dmg: 1 });
+  return 22 - L * 2;
+}
+function nearestTarget(x, y) {
+  let best = null, bd = 1e9;
+  for (const e of enemies) { if (e.dead || e.y < -10) continue; const d = Math.hypot(e.x - x, e.y - y); if (d < bd) { bd = d; best = e; } }
+  if (boss && !boss.dead && !boss.enter) { const d = Math.hypot(boss.x - x, boss.y - y) * 1.2; if (d < bd) best = boss; }
+  return best;
 }
 
 function useBomb() {
@@ -941,7 +957,7 @@ function update() {
     // partner cat follows on the left, a little behind
     const tx = player.x - 26 * (player.x > 40 ? 1 : -1), ty = player.y + 18;
     partner.x += (tx - partner.x) * 0.12; partner.y += (ty - partner.y) * 0.12;
-    if (partner.cool-- <= 0 && firing) { partnerFire(); partner.cool = 9; }
+    if (partner.cool-- <= 0 && firing) partner.cool = partnerFire();
     tryPunch(player, 1); tryPunch(partner, 0.75);
     if (!LOW_Q && frame % 3 === 0) parts.push({ x: player.x + rand(-3, 3), y: player.y + 16, vx: rand(-0.3, 0.3), vy: rand(1, 2), life: 18, max: 18, col: CATS[player.cat].shot, s: 2 });
   } else if (player.respawn > 0) {
@@ -1000,16 +1016,27 @@ function update() {
 
   // player shots
   for (const s of pShots) {
+    if (s.homing) {
+      // steer toward the nearest enemy, a little at a time
+      if (--s.life <= 0) { s.dead = true; continue; }
+      const tgt = nearestTarget(s.x, s.y);
+      if (tgt) {
+        const a = Math.atan2(tgt.y - s.y, tgt.x - s.x), sp = 8;
+        s.vx += (Math.cos(a) * sp - s.vx) * 0.12; s.vy += (Math.sin(a) * sp - s.vy) * 0.12;
+      } else s.vy -= 0.3;
+      if (!LOW_Q && frame % 2 === 0) parts.push({ x: s.x, y: s.y, vx: 0, vy: 0, life: 10, max: 10, col: s.col, s: 2.5 });
+    }
     s.x += s.vx; s.y += s.vy;
+    const dmg = s.dmg || 1;
     for (const e of enemies) {
-      if (!e.dead && Math.abs(s.x - e.x) < e.r && Math.abs(s.y - e.y) < e.r) { s.dead = true; damageEnemy(e, 1); if (!e.dead) sfx.hit(); break; }
+      if (!e.dead && Math.abs(s.x - e.x) < e.r && Math.abs(s.y - e.y) < e.r) { s.dead = true; damageEnemy(e, dmg); if (!e.dead) sfx.hit(); break; }
     }
     if (!s.dead && boss && !boss.dead && !boss.enter && Math.abs(s.x - boss.x) < boss.r + 4 && Math.abs(s.y - boss.y) < boss.r) {
-      s.dead = true; damageBoss(1); score += 10; addSp(0.05); if (frame % 4 === 0) sfx.bossHit();
+      s.dead = true; damageBoss(dmg); score += 10; addSp(0.05); if (frame % 4 === 0) sfx.bossHit();
       if (Math.random() < 0.3) burst(s.x, s.y, 1, C.paper, 1.5);
     }
   }
-  pShots = pShots.filter(s => !s.dead && s.y > -20 && s.x > -20 && s.x < W + 20);
+  pShots = pShots.filter(s => !s.dead && s.y > -20 && s.y < H + 20 && s.x > -20 && s.x < W + 20);
 
   // enemy shots
   if (bombFx > 0) { bombFx--; eShots.length = 0; }
@@ -1825,14 +1852,16 @@ function draw() {
 
   // player shots
   ctx.fillStyle = 'rgba(11,14,42,0.75)';
-  for (const s of pShots) { if (s.small) { ctx.beginPath(); ctx.arc(s.x, s.y, 3.8, 0, TAU); ctx.fill(); } else ctx.fillRect(s.x - 2.5, s.y - 8, 5, 14); }
+  for (const s of pShots) { if (s.homing) { ctx.beginPath(); ctx.arc(s.x, s.y, 5.2, 0, TAU); ctx.fill(); } else if (s.paw) { ctx.beginPath(); ctx.arc(s.x, s.y + 1, 4.6, 0, TAU); ctx.fill(); } else if (s.small) { ctx.beginPath(); ctx.arc(s.x, s.y, 3.8, 0, TAU); ctx.fill(); } else ctx.fillRect(s.x - 2.5, s.y - 8, 5, 14); }
   for (const s of pShots) {
     ctx.fillStyle = s.col;
+    if (s.homing) { ctx.beginPath(); ctx.arc(s.x, s.y, 4, 0, TAU); ctx.fill(); ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(s.x, s.y, 1.6, 0, TAU); ctx.fill(); continue; }
+    if (s.paw) { ctx.beginPath(); ctx.arc(s.x, s.y + 1.5, 2.6, 0, TAU); ctx.fill(); for (const tx of [-2.4, 0, 2.4]) { ctx.beginPath(); ctx.arc(s.x + tx, s.y - 2.2 + Math.abs(tx) * 0.3, 1.2, 0, TAU); ctx.fill(); } continue; }
     if (s.small) { ctx.beginPath(); ctx.arc(s.x, s.y, 2.6, 0, TAU); ctx.fill(); continue; }
     ctx.fillRect(s.x - 1.5, s.y - 7, 3, 12);
   }
   ctx.fillStyle = C.paper;
-  for (const s of pShots) if (!s.small) ctx.fillRect(s.x - 0.5, s.y - 6, 1, 8);
+  for (const s of pShots) if (!s.small && !s.homing && !s.paw) ctx.fillRect(s.x - 0.5, s.y - 6, 1, 8);
 
   // partner + player
   const swipe = (c, sc) => {
@@ -2187,7 +2216,7 @@ function drawTitle() {
     text(k.style, cx, card.y + 145, 11, k.shot);
     text(k.note, cx, card.y + 159, 9, C.dim);
   }
-  text(`${CATS[partnerOf(selCat)].name}ちゃんは相棒として一緒に飛ぶよ`, W / 2, CARD_Y + CARD_H + 18, 10, C.dim);
+  text(selCat === 'tina' ? 'ライナちゃんは相棒で 肉球弾＆猫パンチで援護！' : 'ティナちゃんは相棒で 追いかけ弾で援護！', W / 2, CARD_Y + CARD_H + 18, 10, C.dim);
   if (Math.floor(frame / 30) % 2 === 0) text('タップ / Enter でスタート', W / 2, CARD_Y + CARD_H + 48, 15, C.paper);
   text(`HI SCORE  ${hiScore.toLocaleString()}`, W / 2 - 62, CARD_Y + CARD_H + 76, 12, C.amber);
   ctx.fillStyle = 'rgba(22,27,71,0.85)'; ctx.fillRect(RANK_BTN.x, RANK_BTN.y, RANK_BTN.w, RANK_BTN.h);
