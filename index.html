@@ -718,25 +718,32 @@ function drawKuu(x, y, t, sc = 1) {
   // body and front legs
   E(0, 13, 8, 9, white);
   E(-3.5, 21, 2.6, 3, white); E(3.5, 21, 2.6, 3, white);
-  // big feathered "butterfly" ears
-  for (const s of [-1, 1]) {
-    ctx.fillStyle = dark; ctx.beginPath(); ctx.moveTo(s * 5, -9); ctx.quadraticCurveTo(s * 26, -26, s * 24, -4); ctx.quadraticCurveTo(s * 18, 2, s * 9, -1); ctx.closePath(); ctx.fill();
-    ctx.fillStyle = tan; ctx.beginPath(); ctx.moveTo(s * 6, -8); ctx.quadraticCurveTo(s * 22, -22, s * 21, -5); ctx.quadraticCurveTo(s * 16, 0, s * 9, -2); ctx.closePath(); ctx.fill();
-    // soft feathered fringe along the outer edge of the ear
-    for (let i = 0; i < 6; i++) {
-      const u = i / 5, ex = s * (13 + 9 * Math.sin(u * 2.4)), ey = -20 + u * 18, ang = s * (-0.9 + u * 1.1);
-      E(ex, ey, 3.4, 1.2, i % 2 ? 'rgba(236,222,204,0.9)' : 'rgba(120,80,48,0.85)', ang);
+  // big upright "butterfly" ears: a fan of long silky fur, dark at the edges, tan inside, pale wispy tips
+  for (const sd of [-1, 1]) {
+    const bx = sd * 6, by = -10;
+    for (let j = 0; j < 4; j++) {
+      const a0 = -1.4 + j * 0.3, a = sd > 0 ? a0 : Math.PI - a0, dx = Math.cos(a), dy = Math.sin(a);
+      E(bx + dx * 8.5, by + dy * 8.5, 8.8, 3.8, dark, a);
+    }
+    for (let j = 0; j < 4; j++) {
+      const a0 = -1.35 + j * 0.28, a = sd > 0 ? a0 : Math.PI - a0, dx = Math.cos(a), dy = Math.sin(a);
+      E(bx + dx * 7, by + dy * 7, 6.5, 2.8, tan, a);
+    }
+    for (let j = 0; j < 5; j++) {
+      const a0 = -1.45 + j * 0.28, a = sd > 0 ? a0 : Math.PI - a0, dx = Math.cos(a), dy = Math.sin(a);
+      E(bx + dx * 16.5, by + dy * 16.5, 3.4, 1.3, j % 2 ? 'rgba(242,232,216,0.9)' : 'rgba(150,104,64,0.85)', a);
     }
   }
-  // head: white with tan patches over the eyes and a white blaze in the middle
-  E(0, -2, 11, 10, white);
-  E(-5.5, -5, 5.5, 5.5, tan); E(5.5, -5, 5.5, 5.5, tan);
-  E(0, -6, 2.4, 6, white);
-  E(0, 3.5, 5.5, 4, white);
+  // head: white, tan patches around the eyes reaching up over the brow, a narrow white blaze
+  E(0, -2, 11.5, 10, white);
+  E(-5.8, -5, 5.8, 5.6, tan); E(5.8, -5, 5.8, 5.6, tan);
+  E(-6.2, -9.5, 5, 3.6, tan); E(6.2, -9.5, 5, 3.6, tan);
+  E(0, -6.5, 2.1, 7, white);
+  E(0, 3.5, 5.8, 4.2, white);
   // big round dark eyes
   for (const s of [-1, 1]) { E(s * 4.6, -3.2, 2.9, 3, '#1a100a'); E(s * 4.6 + 0.9, -4.3, 1, 1, '#ffffff'); E(s * 4.6 - 0.8, -2.2, 0.45, 0.45, '#ffffff'); }
   // nose, little dark muzzle and a smile
-  E(0, 2.6, 3.4, 2.4, 'rgba(90,60,40,0.35)');
+  E(0, 3.2, 3.8, 2.8, 'rgba(80,50,30,0.45)');
   E(0, 1.6, 2.3, 1.7, '#120a06');
   ctx.strokeStyle = dark; ctx.lineWidth = 0.9; ctx.beginPath(); ctx.moveTo(0, 3.2); ctx.quadraticCurveTo(-2, 5.5, -3.2, 4.2); ctx.moveTo(0, 3.2); ctx.quadraticCurveTo(2, 5.5, 3.2, 4.2); ctx.stroke();
   // halo
@@ -2143,17 +2150,20 @@ function drawSplash() {
 }
 // ---------- Ending: MISSION COMPLETED ----------
 let endT = 0, endInfo = null;
-const END_HOME = 210, END_STATS = 470, END_ROLL = 700, END_DONE = 1500;
+const END_HOME = 210, END_STATS = 470, END_ROLL = 700, ROLL_SPEED = 1.1;
+let END_DONE = 99999;   // set once the credit list is known
 const CREDITS = [
   ['STAFF', 'h'], ['', ''], ['しゅやく', 's'], ['ティナ（ロシアンブルー）', ''], ['ライナ（キジトラ）', ''], ['', ''],
   ['ボス', 's'], ['ツキノワグマ', ''], ['大ナマズ', ''], ['マンドリル', ''], ['ホオジロザメ', ''], ['', ''],
   ['ザコたち', 's'], ['七星テントウ　オニヤンマ', ''], ['鳩　タヌキ', ''], ['', ''],
   ['アイテム', 's'], ['ビッツ　サラミ　マタタビ', ''], ['', ''],
   ['ゲームデザイン', 's'], ['NAKAATSU46', ''], ['', ''], ['プログラム', 's'], ['Claude', ''], ['', ''],
-  ['おたすけ', 's'], ['天国のくーちゃん（チワワ）', ''], ['', ''],
+  ['おたすけ', 's'], ['', ''], ['', 'kuu'], ['', ''], ['天国のくーちゃん（チワワ）', ''], ['', ''],
   ['Special Thanks', 's'], ['ほんもののティナちゃん', ''], ['ほんもののライナちゃん', ''], ['そして 天国のくーちゃん', ''], ['', ''], ['', ''],
-  ['Thank you for playing!', 'h'],
+  ['Thank you for playing!', 'h'], ['', ''], ['', ''], ['', 'trio'],
 ];
+const ROLL_STOP = H / 2 + 20 - (CREDITS.length - 1) * 30;
+END_DONE = END_ROLL + Math.ceil((H + 10 - ROLL_STOP) / ROLL_SPEED) + 10;
 function startEnding() {
   state = 'ending'; endT = 0; runCleared = true; special = null;
   const lifeB = Math.max(0, player.lives) * 10000, bombB = player.bombs * 3000, diffB = D().bonus;
@@ -2175,6 +2185,7 @@ function endingTap() {
   if (endT < END_HOME) endT = END_HOME;
   else if (endT < END_STATS) endT = END_STATS;
   else if (endT < END_ROLL) endT = END_ROLL;
+  else if (endT < END_DONE) endT = END_DONE;     // jump to the end of the staff roll
   else finishRun();
 }
 function drawHome(t) {
@@ -2248,12 +2259,15 @@ function drawEnding() {
   }
   // staff roll
   ctx.fillStyle = 'rgba(11,14,42,0.55)'; ctx.fillRect(0, 70, W, H - 70);
-  const y0 = H + 10 - (t - END_ROLL) * 0.9;
+  const y0 = Math.max(ROLL_STOP, H + 10 - (t - END_ROLL) * ROLL_SPEED);   // stops with the last row on screen
   CREDITS.forEach(([line, kind], i) => {
-    const y = y0 + i * 30; if (y < 70 || y > H + 20) return;
+    const y = y0 + i * 30; if (y < 30 || y > H + 60) return;
+    if (kind === 'kuu') { drawKuu(W / 2, y, frame, 1.5); return; }
+    if (kind === 'trio') { drawCat(W / 2 - 62, y + 8, frame, 'tina', 1.5, isBlink(frame)); drawKuu(W / 2, y - 6, frame, 1.3); drawCat(W / 2 + 62, y + 10, frame + 40, 'raina', 1.4, isBlink(frame + 90)); return; }
+    if (y < 70) return;
     text(line, W / 2, y, kind === 'h' ? 22 : kind === 's' ? 11 : 15, kind === 'h' ? C.amber : kind === 's' ? C.dim : C.paper);
   });
-  if (y0 + CREDITS.length * 30 < H / 2 && Math.floor(frame / 30) % 2) text('タップしてランキングへ', W / 2, H - 40, 13, C.paper);
+  if (y0 <= ROLL_STOP + 1 && Math.floor(frame / 30) % 2) text('タップしてランキングへ', W / 2, H - 40, 13, C.paper);
 }
 function drawRanking() {
   ctx.fillStyle = 'rgba(11,14,42,0.85)'; ctx.fillRect(0, 0, W, H);
