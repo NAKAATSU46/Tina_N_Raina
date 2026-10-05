@@ -1797,7 +1797,8 @@ function makeBg(kind) {
   const flowers = (n, pal) => {
     for (let i = 0; i < n; i++) {
       const cx = r(0, W), cy = r(0, BG_H), col = pick(pal), k = 2 + Math.floor(r(0, 5));
-      wrap(cy, 30, yy => { for (let j = 0; j < k; j++) { const x = cx + r(-12, 12), y = yy + r(-10, 10);
+      const offs = Array.from({ length: k }, () => [r(-12, 12), r(-10, 10)]);
+      wrap(cy, 30, yy => { for (let j = 0; j < k; j++) { const x = cx + offs[j][0], y = yy + offs[j][1];
         for (let p = 0; p < 5; p++) { const a = p / 5 * TAU; el(x + Math.cos(a) * 1.8, y + Math.sin(a) * 1.8, 1.5, 1.5, col); }
         el(x, y, 1, 1, '#f3c43a'); } });
     }
@@ -1857,7 +1858,8 @@ function makeBg(kind) {
     for (const off of [30, 62, 100]) { g.beginPath(); for (let y = 0; y <= BG_H; y += 4) { const x = sx(y) - off + Math.sin(y * 0.05 + off) * 5; y ? g.lineTo(x, y) : g.moveTo(x, y); } g.stroke(); }
     // starfish and shells on the sand
     for (let i = 0; i < 16; i++) { const y = r(0, BG_H), x = sx(y) + r(30, 140); if (x > W - 10) continue;
-      wrap(y, 20, yy => { if (R() < 0.5) { g.fillStyle = '#ef8a4a'; g.beginPath(); for (let k = 0; k < 10; k++) { const a = k / 10 * TAU - Math.PI / 2, rr = k % 2 ? 2.2 : 5.5; g.lineTo(x + Math.cos(a) * rr, yy + Math.sin(a) * rr); } g.closePath(); g.fill(); }
+      const isStar = R() < 0.5;
+      wrap(y, 20, yy => { if (isStar) { g.fillStyle = '#ef8a4a'; g.beginPath(); for (let k = 0; k < 10; k++) { const a = k / 10 * TAU - Math.PI / 2, rr = k % 2 ? 2.2 : 5.5; g.lineTo(x + Math.cos(a) * rr, yy + Math.sin(a) * rr); } g.closePath(); g.fill(); }
         else { el(x, yy, 4, 3.4, '#f2c0c8'); g.strokeStyle = '#d98f9c'; g.lineWidth = 0.7; for (const a of [-0.6, 0, 0.6]) { g.beginPath(); g.moveTo(x, yy + 3); g.lineTo(x + Math.sin(a) * 4, yy - 3); g.stroke(); } } });
     }
     // beach umbrellas with towels
@@ -1879,21 +1881,27 @@ function makeBg(kind) {
   }
   return c;
 }
-function bgTile(kind) { return bgTiles[kind] || (bgTiles[kind] = makeBg(kind)); }
+// The tile is stored with its first screen-height repeated at the bottom, so any
+// scroll position can be copied in ONE piece (two pieces left a thin seam line).
+function bgTile(kind) {
+  if (bgTiles[kind]) return bgTiles[kind];
+  const t = makeBg(kind), k = t.width / W;
+  const c = document.createElement('canvas'); c.width = t.width; c.height = Math.round((BG_H + H) * k);
+  const g = c.getContext('2d', { alpha: false });
+  g.drawImage(t, 0, 0); g.drawImage(t, 0, BG_H * k);
+  return (bgTiles[kind] = c);
+}
 let bgY = 0, bgPrev = null, bgFade = 0;
 const biomeOf = st => BIOMES[(st - 1) % BIOMES.length];
 function drawBackground() {
   const kind = (state === 'title' || state === 'splash') ? 'meadow' : biomeOf(stage);
   const y = bgY;
   const blit = (k, a) => {
-    const t = bgTile(k), sx = t.width / W, sy = t.height / BG_H;
+    const t = bgTile(k), sc = t.width / W;
     ctx.globalAlpha = a;
-    // the tile is drawn at y-BG_H and y; screen rows 0..H map to tile rows below
-    const top = BG_H - y;                               // tile row shown at screen y=0 (upper copy)
-    const h1 = Math.min(H, y);                          // rows of the upper copy on screen
-    if (h1 > 0) ctx.drawImage(t, 0, top * sy, t.width, h1 * sy, 0, 0, W, h1);
-    const h2 = H - Math.max(0, h1);
-    if (h2 > 0) ctx.drawImage(t, 0, 0, t.width, h2 * sy, 0, Math.max(0, h1), W, h2);
+    let top = (BG_H - y) % BG_H; if (top < 0) top += BG_H;   // tile row shown at the top of the screen
+    const sy = Math.round(top * sc);                          // whole source pixels: no shimmer
+    ctx.drawImage(t, 0, sy, t.width, Math.round(H * sc), 0, 0, W, H);
     ctx.globalAlpha = 1;
   };
   blit(kind, 1);
