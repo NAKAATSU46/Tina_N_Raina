@@ -661,8 +661,92 @@ function drawSpecial() {
   }
 }
 
+
+// ---------- 天国のくーちゃん (special helper: long-haired chihuahua angel) ----------
+let kuu = null, kuuSaved = false;
+function bark(when = 0, pitch = 1) {
+  if (!ac) return;
+  const t0 = ac.currentTime + when;
+  const o = ac.createOscillator(), bp = ac.createBiquadFilter(), g = ac.createGain();
+  o.type = 'sawtooth';
+  o.frequency.setValueAtTime(820 * pitch, t0); o.frequency.linearRampToValueAtTime(1050 * pitch, t0 + 0.03); o.frequency.exponentialRampToValueAtTime(520 * pitch, t0 + 0.14);
+  bp.type = 'bandpass'; bp.frequency.setValueAtTime(1600, t0); bp.frequency.linearRampToValueAtTime(900, t0 + 0.14); bp.Q.value = 2.5;
+  g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.18, t0 + 0.012); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.16);
+  o.connect(bp).connect(g).connect(sfxBus); o.start(t0); o.stop(t0 + 0.2);
+}
+function chime(when = 0) { [1319, 1568, 1976, 2637].forEach((f, i) => tone(f, 0.5, 'sine', 0.04, 0, when + i * 0.09)); }
+// mode 'help': floats down during a boss fight and showers the boss with stars
+// mode 'save': appears when the cats would be knocked out for good, and protects them once
+function callKuu(mode) {
+  if (kuu) return;
+  kuu = { mode, t: 0, x: mode === 'save' ? player.x : W / 2, y: -50, tx: mode === 'save' ? player.x : W / 2, ty: mode === 'save' ? player.y - 70 : 150 };
+  chime(); bark(0.5); bark(0.68, 1.05);
+  if (mode === 'save') { popup(W / 2, H / 2 - 40, 'くーちゃんの奇跡！', '#ffe9a8', 22, 110, 0.2); popup(W / 2, H / 2 - 12, 'くーちゃんが まもってくれた', C.paper, 13, 110, 0.2); }
+  else popup(W / 2, 210, '天国のくーちゃんが おたすけ！', '#ffe9a8', 15, 100, 0.2);
+}
+function updateKuu() {
+  if (!kuu) return;
+  const k = kuu; k.t++;
+  const leaving = k.mode === 'save' ? k.t > 170 : k.t > 480;
+  if (leaving) { k.ty = -80; }
+  else if (k.mode === 'help') { k.tx = W / 2 + Math.sin(k.t / 50) * 110; k.ty = 140 + Math.sin(k.t / 23) * 14; if (boss && !boss.dead) k.ty = Math.max(k.ty, boss.y + 70); }
+  else { k.tx = player.x; k.ty = player.y - 70; }
+  k.x += (k.tx - k.x) * 0.06; k.y += (k.ty - k.y) * 0.06;
+  if (k.mode === 'save') {
+    eShots.length = 0;                                   // heaven's light wipes the bullets
+    if (k.t < 160) player.inv = Math.max(player.inv, 200);
+  }
+  if (k.mode === 'help' && !leaving && k.t > 40 && k.t % 9 === 0) {
+    pShots.push({ x: k.x, y: k.y + 8, vx: rand(-2, 2), vy: 3, col: '#ffe08a', homing: true, star: true, dmg: 3, life: 140 });
+    if (k.t % 90 === 0) bark(0, 1 + Math.random() * 0.1);
+  }
+  if (!LOW_Q && k.t % 4 === 0) parts.push({ x: k.x + rand(-14, 14), y: k.y + rand(-6, 14), vx: 0, vy: 0.4, life: 26, max: 26, col: '#fff3c4', s: 2 });
+  if (leaving && k.y < -70) kuu = null;
+}
+function drawKuu(x, y, t, sc = 1) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(sc, sc);
+  const tan = '#b5793f', dark = '#4a2e1c', white = '#fbf7f0';
+  // heavenly glow
+  ctx.globalAlpha = 0.28 + Math.sin(t * 0.08) * 0.08; E(0, 2, 30, 30, '#fff1b8'); ctx.globalAlpha = 1;
+  // angel wings
+  const fl = Math.sin(t * 0.25) * 0.25;
+  for (const s of [-1, 1]) {
+    ctx.save(); ctx.translate(s * 8, 8); ctx.rotate(s * (0.5 + fl));
+    E(s * 10, -2, 11, 6, '#ffffff'); E(s * 15, 2, 8, 4.5, '#f2f4ff'); E(s * 8, 3, 7, 4, '#ffffff');
+    ctx.restore();
+  }
+  // body and front legs
+  E(0, 13, 8, 9, white);
+  E(-3.5, 21, 2.6, 3, white); E(3.5, 21, 2.6, 3, white);
+  // big feathered "butterfly" ears
+  for (const s of [-1, 1]) {
+    ctx.fillStyle = dark; ctx.beginPath(); ctx.moveTo(s * 5, -9); ctx.quadraticCurveTo(s * 26, -26, s * 24, -4); ctx.quadraticCurveTo(s * 18, 2, s * 9, -1); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = tan; ctx.beginPath(); ctx.moveTo(s * 6, -8); ctx.quadraticCurveTo(s * 22, -22, s * 21, -5); ctx.quadraticCurveTo(s * 16, 0, s * 9, -2); ctx.closePath(); ctx.fill();
+    // soft feathered fringe along the outer edge of the ear
+    for (let i = 0; i < 6; i++) {
+      const u = i / 5, ex = s * (13 + 9 * Math.sin(u * 2.4)), ey = -20 + u * 18, ang = s * (-0.9 + u * 1.1);
+      E(ex, ey, 3.4, 1.2, i % 2 ? 'rgba(236,222,204,0.9)' : 'rgba(120,80,48,0.85)', ang);
+    }
+  }
+  // head: white with tan patches over the eyes and a white blaze in the middle
+  E(0, -2, 11, 10, white);
+  E(-5.5, -5, 5.5, 5.5, tan); E(5.5, -5, 5.5, 5.5, tan);
+  E(0, -6, 2.4, 6, white);
+  E(0, 3.5, 5.5, 4, white);
+  // big round dark eyes
+  for (const s of [-1, 1]) { E(s * 4.6, -3.2, 2.9, 3, '#1a100a'); E(s * 4.6 + 0.9, -4.3, 1, 1, '#ffffff'); E(s * 4.6 - 0.8, -2.2, 0.45, 0.45, '#ffffff'); }
+  // nose, little dark muzzle and a smile
+  E(0, 2.6, 3.4, 2.4, 'rgba(90,60,40,0.35)');
+  E(0, 1.6, 2.3, 1.7, '#120a06');
+  ctx.strokeStyle = dark; ctx.lineWidth = 0.9; ctx.beginPath(); ctx.moveTo(0, 3.2); ctx.quadraticCurveTo(-2, 5.5, -3.2, 4.2); ctx.moveTo(0, 3.2); ctx.quadraticCurveTo(2, 5.5, 3.2, 4.2); ctx.stroke();
+  // halo
+  ctx.strokeStyle = '#ffd24a'; ctx.lineWidth = 2.4; ctx.beginPath(); ctx.ellipse(0, -18 + Math.sin(t * 0.1) * 1.2, 9, 2.6, 0, 0, TAU); ctx.stroke();
+  ctx.strokeStyle = '#fff6d0'; ctx.lineWidth = 0.8; ctx.stroke();
+  ctx.restore();
+}
+
 function resetGame() {
-  score = 0; stage = 1; runCleared = false; hiScore = topScore(diffKey);
+  score = 0; stage = 1; runCleared = false; kuu = null; kuuSaved = false; hiScore = topScore(diffKey);
   player = { x: W / 2, y: H - 90, lives: D().lives, bombs: D().bombs, level: 1, cool: 0, inv: 120, alive: true, respawn: 0, cat: selCat, streak: 0, matatabi: 0, sp: 0 };
   partner = { x: W / 2 - 26, y: H - 70, cat: partnerOf(selCat), cool: 0, punch: 0, punchCD: 0, side: 1 };
   player.punch = 0; player.punchCD = 0; player.side = 1;
@@ -883,6 +967,7 @@ function mkItem(kind, x, y) { return { kind, x, y, vy: -2.5, t: 0 }; }
 
 function hitPlayer() {
   if (player.inv > 0 || !player.alive) return;
+  if (player.lives <= 0 && !kuuSaved) { kuuSaved = true; flash = 14; shake = 8; player.inv = 200; callKuu('save'); return; }
   player.alive = false; player.respawn = 70;
   player.streak = 0;
   if (boss && !boss.dead) boss.noMiss = false;
@@ -1008,11 +1093,13 @@ function update() {
       if (b.rage > 0) b.rage--;
       bossMove(b);
       bossAttack(b, 2.2 * Math.min(1.5, 0.85 + stage * 0.15));
+      if (b.t === 600 && !b.kuuHelped) { b.kuuHelped = true; callKuu('help'); }
     }
     if (player.alive && Math.hypot(b.x - player.x, b.y - player.y) < b.r + 3) hitPlayer();
   }
 
   if (boss && boss.dead && boss.deathT > 0) boss.deathT--;
+  updateKuu();
 
   // player shots
   for (const s of pShots) {
@@ -1855,6 +1942,7 @@ function draw() {
   for (const s of pShots) { if (s.homing) { ctx.beginPath(); ctx.arc(s.x, s.y, 5.2, 0, TAU); ctx.fill(); } else if (s.paw) { ctx.beginPath(); ctx.arc(s.x, s.y + 1, 4.6, 0, TAU); ctx.fill(); } else if (s.small) { ctx.beginPath(); ctx.arc(s.x, s.y, 3.8, 0, TAU); ctx.fill(); } else ctx.fillRect(s.x - 2.5, s.y - 8, 5, 14); }
   for (const s of pShots) {
     ctx.fillStyle = s.col;
+    if (s.star) { ctx.beginPath(); for (let i = 0; i < 10; i++) { const a = i / 10 * TAU - Math.PI / 2 + frame * 0.1, r = i % 2 ? 2.4 : 5.5; ctx.lineTo(s.x + Math.cos(a) * r, s.y + Math.sin(a) * r); } ctx.closePath(); ctx.fill(); continue; }
     if (s.homing) { ctx.beginPath(); ctx.arc(s.x, s.y, 4, 0, TAU); ctx.fill(); ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(s.x, s.y, 1.6, 0, TAU); ctx.fill(); continue; }
     if (s.paw) { ctx.beginPath(); ctx.arc(s.x, s.y + 1.5, 2.6, 0, TAU); ctx.fill(); for (const tx of [-2.4, 0, 2.4]) { ctx.beginPath(); ctx.arc(s.x + tx, s.y - 2.2 + Math.abs(tx) * 0.3, 1.2, 0, TAU); ctx.fill(); } continue; }
     if (s.small) { ctx.beginPath(); ctx.arc(s.x, s.y, 2.6, 0, TAU); ctx.fill(); continue; }
@@ -1905,6 +1993,10 @@ function draw() {
     ctx.beginPath(); ctx.arc(player.x, player.y, r, 0, TAU); ctx.stroke();
   }
 
+  if (kuu) {
+    if (kuu.mode === 'save' && kuu.t < 170 && player.alive) { ctx.strokeStyle = `rgba(255,224,138,${0.5 + Math.sin(frame * 0.3) * 0.3})`; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(player.x, player.y - 2, 24, 0, TAU); ctx.stroke(); }
+    drawKuu(kuu.x, kuu.y, frame, 1.1);
+  }
   ctx.restore();
 
   if (flash) { ctx.fillStyle = `rgba(243,234,216,${flash / 40})`; ctx.fillRect(0, 0, W, H); }
@@ -2050,7 +2142,8 @@ const CREDITS = [
   ['ザコたち', 's'], ['七星テントウ　オニヤンマ', ''], ['鳩　タヌキ', ''], ['', ''],
   ['アイテム', 's'], ['ビッツ　サラミ　マタタビ', ''], ['', ''],
   ['ゲームデザイン', 's'], ['NAKAATSU46', ''], ['', ''], ['プログラム', 's'], ['Claude', ''], ['', ''],
-  ['Special Thanks', 's'], ['ほんもののティナちゃん', ''], ['ほんもののライナちゃん', ''], ['', ''], ['', ''],
+  ['おたすけ', 's'], ['天国のくーちゃん（チワワ）', ''], ['', ''],
+  ['Special Thanks', 's'], ['ほんもののティナちゃん', ''], ['ほんもののライナちゃん', ''], ['そして 天国のくーちゃん', ''], ['', ''], ['', ''],
   ['Thank you for playing!', 'h'],
 ];
 function startEnding() {
@@ -2094,6 +2187,7 @@ function drawHome(t) {
   E(W / 2, 428, 70, 16, '#c0394a'); E(W / 2, 424, 62, 11, '#d9576a');         // cushion
   drawCat(W / 2 - 24, 404, t * 0.3, 'tina', 1.5, true);
   drawCat(W / 2 + 24, 406, t * 0.3 + 40, 'raina', 1.4, true);
+  drawKuu(90, 170 + Math.sin(t / 30) * 5, t, 0.9);
   ctx.strokeStyle = '#5a3d2a'; ctx.lineWidth = 4; ctx.strokeRect(95, 330, 170, 115);
   ctx.beginPath(); ctx.moveTo(W / 2, 330); ctx.lineTo(W / 2, 352); ctx.stroke();
   // Zzz
@@ -2189,6 +2283,7 @@ function drawRanking() {
   if (Math.floor(frame / 30) % 2) text('タップ / Enter でタイトルへ', W / 2, H - 24, 12, C.paper);
 }
 function drawTitle() {
+  drawKuu(W - 40, 36 + Math.sin(frame / 25) * 4, frame, 0.75);
   text("TINA & RAINA'S GREAT ADVENTURE", W / 2, 62, 10, C.paper);
   text('ティナとライナの', W / 2, 100, 24, C.paper);
   text('大冒険', W / 2 + 3, 160, 62, C.rose);
